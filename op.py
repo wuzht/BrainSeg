@@ -149,40 +149,45 @@ class Operation:
 
 
     def predict(self, image, y_gt):
-        self.model.eval()
-        x = torch.from_numpy(image).to(self.device)
-        x = x.reshape(1, x.shape[0], x.shape[1], x.shape[2])    # B,C,H,W
+        with torch.no_grad():
+            self.model.eval()
+            x = torch.from_numpy(image).to(self.device)
+            x = x.reshape(1, x.shape[0], x.shape[1], x.shape[2])    # B,C,H,W
 
-        y_gt = y_gt.to(self.device)
-        y_gt = y_gt.reshape(1, y_gt.shape[0], y_gt.shape[1])    # B,H,W
+            y_gt = y_gt.to(self.device)
+            y_gt = y_gt.reshape(1, y_gt.shape[0], y_gt.shape[1])    # B,H,W
 
-        output = self.model(x)
-        _, y_pred = torch.max(output, dim=1)
+            output = self.model(x)
+            p = F.softmax(output, dim=1).cpu().data.numpy()
+            entropy = -np.sum(p * np.log(p), axis=1) # (shape: (batch_size, h, w))
 
-        dices = self.get_dices(y_pred, y_gt)
+            _, y_pred = torch.max(output, dim=1)
 
-        # 转numpy
-        y_pred = y_pred.cpu().data.numpy() if torch.cuda.is_available() else y_pred.data.numpy()
-        y_gt = y_gt.cpu().data.numpy() if torch.cuda.is_available() else y_gt.data.numpy()
+            dices = self.get_dices(y_pred, y_gt)
 
-        # show me the result
-        fig, axs = plt.subplots(2,2, sharey=True, figsize=(10,8))
-        axs[0][0].set_title("Original data")
-        axs[0][1].set_title("Ground Truth")
-        axs[1][0].set_title("Probility heatmap")
-        axs[1][1].set_title("Prediction")
-        plt.suptitle("dice : {}".format(arr2str(dices)))
-        
-        # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
-        cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
-        # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
+            # 转numpy
+            y_pred = y_pred.cpu().data.numpy() if torch.cuda.is_available() else y_pred.data.numpy()
+            y_gt = y_gt.cpu().data.numpy() if torch.cuda.is_available() else y_gt.data.numpy()
 
-        ax00 = axs[0][0].imshow( image[0,...], aspect="auto")
-        ax01 = axs[0][1].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=9)
-        ax10 = axs[1][0].imshow( image[0,...],  aspect="auto")
-        ax11 = axs[1][1].imshow( y_pred[0,...], cmap=cmap, aspect="auto", vmin=0, vmax=9)
-        
-        fig.colorbar(ax00, ax=axs[0][0])
-        fig.colorbar(ax01, ax=axs[0][1])
-        fig.colorbar(ax10, ax=axs[1][0])
-        fig.colorbar(ax11, ax=axs[1][1])
+
+            # show me the result
+            fig, axs = plt.subplots(2,2, sharey=True, figsize=(10,8))
+            axs[0][0].set_title("Original data")
+            axs[0][1].set_title("Ground Truth")
+            axs[1][0].set_title("Entropy")
+            axs[1][1].set_title("Prediction")
+            plt.suptitle("dice : {}".format(arr2str(dices)))
+            
+            # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
+            cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
+            # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
+
+            ax00 = axs[0][0].imshow( image[0,...], aspect="auto")
+            ax01 = axs[0][1].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=9)
+            ax10 = axs[1][0].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'))
+            ax11 = axs[1][1].imshow( y_pred[0,...], cmap=cmap, aspect="auto", vmin=0, vmax=9)
+            
+            fig.colorbar(ax00, ax=axs[0][0])
+            fig.colorbar(ax01, ax=axs[0][1])
+            fig.colorbar(ax10, ax=axs[1][0])
+            fig.colorbar(ax11, ax=axs[1][1])

@@ -91,6 +91,7 @@ class EnsembleModel():
             h, w = x.shape[2], x.shape[3]
             p = torch.zeros(1, self.n_classes, h, w).to(self.device)   # B,C,H,W
 
+            results = np.zeros(len(self.models), self.n_classes, h, w)
             for model in self.models:
                 output = model(x)
                 p_value = F.softmax(output, dim=1) # (shape: (batch_size, n_classes, h, w))
@@ -113,7 +114,7 @@ class EnsembleModel():
             fig, axs = plt.subplots(2,2, sharey=True, figsize=(10,8))
             axs[0][0].set_title("Original data")
             axs[0][1].set_title("Ground Truth")
-            axs[1][0].set_title("Entropy")
+            axs[1][0].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
             axs[1][1].set_title("Prediction")
             plt.suptitle("dice : {}".format(arr2str(dices)))
             
@@ -123,7 +124,7 @@ class EnsembleModel():
 
             ax00 = axs[0][0].imshow( image[0,...], aspect="auto")
             ax01 = axs[0][1].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=9)
-            ax10 = axs[1][0].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'))
+            ax10 = axs[1][0].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0, vmax=2.0)
             ax11 = axs[1][1].imshow( y_pred[0,...], cmap=cmap, aspect="auto", vmin=0, vmax=9)
             
             fig.colorbar(ax00, ax=axs[0][0])
