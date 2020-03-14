@@ -10,7 +10,7 @@ from torch import optim
 import torch.utils.data as Data
 import torch.nn.functional as F
 
-from unet import UNet
+from dropout_unet import UNet
 from dice_loss import dice_coeff
 from brains18 import BrainS18Dataset
 from tools import ImProgressBar, save_model, load_model
@@ -45,7 +45,7 @@ class Operation:
         )
 
         # Model
-        self.model = UNet(n_channels=1, n_classes=cfg.n_classes)
+        self.model = UNet(n_channels=1, n_classes=cfg.n_classes, dropout=cfg.dropout)
         self.criterion = nn.CrossEntropyLoss()     
         self.optimizer = optim.SGD(self.model.parameters(),
                             lr           = cfg.lr,
@@ -55,7 +55,7 @@ class Operation:
         
         self.cfg.log.critical("criterion: \n{}".format(self.criterion))
         self.cfg.log.critical("optimizer: \n{}".format(self.optimizer))
-        # self.cfg.log.critical("model: \n{}".format(self.model))
+        self.cfg.log.critical("model: \n{}".format(self.model))
 
 
     def load(self, path):
@@ -91,6 +91,7 @@ class Operation:
         """Evaluation without the densecrf with the dice coefficient"""
         self.model.eval()
 
+        total_loss = 0
         # dices for each class
         total_dices = np.zeros(self.cfg.n_classes)
         for i, imgs in enumerate(data_loader):
@@ -98,10 +99,13 @@ class Operation:
             batch_y = imgs[3].to(self.device)
 
             out = self.model(batch_x)
+            loss = self.criterion(out, batch_y)
+            total_loss += loss.item()
+            
             _, batch_y_pred = torch.max(out, dim=1)
 
             total_dices += self.get_dices(batch_y_pred, batch_y)
-        return total_dices / (i+1)
+        return total_dices / (i+1), total_loss / (i+1)
 
 
     def get_dices(self, y_pred, y_gt):
@@ -113,7 +117,7 @@ class Operation:
         for c in range(self.cfg.n_classes):
             _x = (y_pred == c).float()
             _y = (y_gt == c).float()
-            dices[c] += dice_coeff(_x, _y).item()
+            dices[c] += dice_coeff(_x, _y, self.device).item()
         return dices
 
 
@@ -126,10 +130,13 @@ class Operation:
             self.cfg.log.info('[Epoch {}/{}]'.format(epoch + 1, self.cfg.epochs))
 
             loss = self.train(self.train_loader)
-            self.cfg.log.info("Train Loss: {:.4f}".format(loss))
+            
 
-            train_dices = self.eval_model(self.train_loader)
-            val_dices = self.eval_model(self.val_loader)
+            train_dices, train_loss = self.eval_model(self.train_loader)
+            val_dices, val_loss = self.eval_model(self.val_loader)
+
+            self.cfg.log.info("Train Loss: {:.4f}".format(train_loss))
+            self.cfg.log.info("Val   Loss: {:.4f}".format(val_loss))
             
             self.cfg.log.info("Class     : {}".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
             self.cfg.log.info("Train dice: {}".format(arr2str(train_dices)))
@@ -171,9 +178,9 @@ class Operation:
         # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
 
         ax00 = axs[0][0].imshow( image[0,...], aspect="auto")
-        ax01 = axs[0][1].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=self.cfg.n_classes-1)
+        ax01 = axs[0][1].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=9)
         ax10 = axs[1][0].imshow( image[0,...],  aspect="auto")
-        ax11 = axs[1][1].imshow( y_pred[0,...], cmap=cmap, aspect="auto", vmin=0, vmax=self.cfg.n_classes-1)
+        ax11 = axs[1][1].imshow( y_pred[0,...], cmap=cmap, aspect="auto", vmin=0, vmax=9)
         
         fig.colorbar(ax00, ax=axs[0][0])
         fig.colorbar(ax01, ax=axs[0][1])

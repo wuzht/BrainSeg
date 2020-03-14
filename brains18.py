@@ -43,10 +43,16 @@ class BrainS18Dataset(Dataset):
         folder = self.img_paths[index].split('/')[-2]
         # read imgs
         imgs = [mpimg.imread(self.img_paths[index] + fn).reshape((1, 240, 240)) for fn in self.file_names]
+
         # imgs[3]是标签图像
         imgs[3] *= 255
+
+        # 将第9类归为第1类
+        imgs[3][imgs[3] == 9] = 1
+
         # 标签图像必须是LongTensor
         imgs[3] = torch.LongTensor(imgs[3].reshape(240, 240))
+        
         # normalization
         for i in range(3):
             # e.g. mean_std = {'_FLAIR.png': [0.14819147, 0.22584382], 
