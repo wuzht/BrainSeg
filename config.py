@@ -15,15 +15,16 @@ parser.add_argument("--exp_dir", type=str, default='./exp', help='实验记录�
 
 # Train
 parser.add_argument("--epochs", type=int, default=128, help='迭代次数')
-parser.add_argument("--lr", type=float, default=1e-3, help='学习率')
+parser.add_argument("--lr", type=float, default=1e-4, help='学习率')
 parser.add_argument("--weight_decay", type=float, default=5e-4, help='权重衰减')
 parser.add_argument("--momentum", type=float, default=0.9, help='动量')
 parser.add_argument("--epsilon", type=float, default=1e-8)
 parser.add_argument("--dropout", type=bool, default=False)
+parser.add_argument("--is_class_weight", type=bool, default=True)
 
 # Data
-parser.add_argument("--data_name", type=str, default='E-brains18', help='数据集名称')
-parser.add_argument("--choose_class", type=int, default=4, help='（二分类）选择哪一类来分割，如标签为4的类')
+parser.add_argument("--data_name", type=str, default='CW-brains18', help='数据集名称')
+# parser.add_argument("--choose_class", type=int, default=4, help='（二分类）选择哪一类来分割，如标签为4的类')
 parser.add_argument("--n_classes", type=int, default=9, help='标签数（背景是第0类）')
 parser.add_argument("--batch_size", type=int, default=10, help='批大小')
 parser.add_argument("--num_workers", type=int, default=8, help='线程数')

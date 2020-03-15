@@ -46,7 +46,13 @@ class Operation:
 
         # Model
         self.model = UNet(n_channels=1, n_classes=cfg.n_classes, dropout=cfg.dropout)
-        self.criterion = nn.CrossEntropyLoss()     
+
+        if self.cfg.is_class_weight:
+            self.class_weight = self.train_data.get_class_weight()
+            self.cfg.log.critical("class_weight: \n{}".format(self.class_weight))
+            self.criterion = nn.CrossEntropyLoss(weight=torch.FloatTensor(self.class_weight))
+        else:
+            self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.SGD(self.model.parameters(),
                             lr           = cfg.lr,
                             momentum     = cfg.momentum,
@@ -174,7 +180,7 @@ class Operation:
             fig, axs = plt.subplots(2,2, sharey=True, figsize=(10,8))
             axs[0][0].set_title("Original data")
             axs[0][1].set_title("Ground Truth")
-            axs[1][0].set_title("Entropy")
+            axs[1][0].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
             axs[1][1].set_title("Prediction")
             plt.suptitle("dice : {}".format(arr2str(dices)))
             
@@ -184,7 +190,7 @@ class Operation:
 
             ax00 = axs[0][0].imshow( image[0,...], aspect="auto")
             ax01 = axs[0][1].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=9)
-            ax10 = axs[1][0].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'))
+            ax10 = axs[1][0].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0, vmax=2)
             ax11 = axs[1][1].imshow( y_pred[0,...], cmap=cmap, aspect="auto", vmin=0, vmax=9)
             
             fig.colorbar(ax00, ax=axs[0][0])

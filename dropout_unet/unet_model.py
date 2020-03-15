@@ -16,7 +16,7 @@ class UNet(nn.Module):
         self.inc   = inconv(n_channels, 64)
         # self.down_dropout1 = nn.Dropout()
         self.down1 = down(64,  128)
-        # self.down_dropout2 = nn.Dropout()
+        self.down_dropout2 = nn.Dropout()
         self.down2 = down(128, 256)
         # self.down_dropout3 = nn.Dropout()
         self.down3 = down(256, 512)
@@ -27,7 +27,7 @@ class UNet(nn.Module):
         self.up1  = up(1024, 256)
         # self.up_dropout2 = nn.Dropout()
         self.up2  = up(512,  128)
-        # self.up_dropout3 = nn.Dropout()
+        self.up_dropout3 = nn.Dropout()
         self.up3  = up(256,  64)
         # self.up_dropout4 = nn.Dropout()
         self.up4  = up(128,  64)
@@ -40,7 +40,7 @@ class UNet(nn.Module):
             # layer1 = self.down_dropout1(layer1)
             layer2 = self.down1( layer1 )
 
-            # layer2 = self.down_dropout2(layer2)
+            layer2 = self.down_dropout2(layer2)
             layer3 = self.down2( layer2 )
 
             # layer3 = self.down_dropout3(layer3)
@@ -55,7 +55,7 @@ class UNet(nn.Module):
             # layer4_up = self.up_dropout2(layer4_up)
             layer3_up = self.up2( layer4_up, layer3)
 
-            # layer3_up = self.up_dropout3(layer3_up)
+            layer3_up = self.up_dropout3(layer3_up)
             layer2_up = self.up3( layer3_up, layer2)
 
             # layer2_up = self.up_dropout4(layer2_up)

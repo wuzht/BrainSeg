@@ -10,7 +10,7 @@ import matplotlib.image as mpimg
 import numpy as np
 import os
 
-from tools import load_model, choose_gpu
+from tools import load_model, choose_gpu, ImProgressBar
 from dropout_unet import UNet
 from brains18 import BrainS18Dataset
 from dice_loss import dice_coeff
@@ -29,14 +29,17 @@ class EnsembleModel():
 
         # config
         self.n_classes = 9
-        self.batch_size = 10
+        self.batch_size = 1
         self.num_workers = 8
 
         self.folders = ['1', '5', '7', '4', '148', '070', '14']
         self.val_folds = ['1']
+        # self.val_folds = ['1_Brats17_CBICA_AAB_1_img']
         self.train_folds = [x for x in self.folders if x not in self.val_folds]
 
         # Data
+        # self.train_data = BrainS18Dataset(root_dir='./datasets/cancer', folders=self.train_folds)
+        # self.val_data = BrainS18Dataset(root_dir='./datasets/cancer', folders=self.val_folds)
         self.train_data = BrainS18Dataset(folders=self.train_folds)
         self.val_data = BrainS18Dataset(folders=self.val_folds)
 
@@ -77,8 +80,42 @@ class EnsembleModel():
             dices[c] += dice_coeff(_x, _y, self.device).item()
         return dices
 
+
+    # def eval_model(self, data_loader):
+    #     """Evaluation without the densecrf with the dice coefficient"""
+    #     # with torch.no_grad():
+    #     M_float = float(len(self.models))
+    #     total_loss = 0
+    #     pbar = ImProgressBar(len(data_loader))
+    #     # dices for each class
+    #     total_dices = np.zeros(self.n_classes)
+    #     for i, imgs in enumerate(data_loader):
+    #         batch_x = imgs[2].to(self.device)
+    #         batch_y = imgs[3].to(self.device)
+
+    #         # h, w = batch_x.shape[2], batch_x.shape[3]
+    #         p = torch.zeros(batch_x.shape).to(self.device)   # B,C,H,W
+
+    #         for i, model in enumerate(self.models):
+    #             output = model(batch_x)
+    #             p_value = output  # (shape: (batch_size, n_classes, h, w))
+    #             p = p + p_value / M_float
+
+    #         # out = self.model(batch_x)
+    #         loss = self.criterion(p, batch_y)
+    #         total_loss += loss.item()
+            
+    #         _, batch_y_pred = torch.max(p, dim=1)
+
+    #         total_dices += self.get_dices(batch_y_pred, batch_y)
+
+    #         pbar.update(i)
+    #     pbar.finish()
+    #     return total_dices / (i+1), total_loss / (i+1)
+
+
     
-    def predict(self, image, y_gt):
+    def predict(self, image, y_gt, title=""):
         M_float = float(len(self.models))
 
         with torch.no_grad():
@@ -91,11 +128,17 @@ class EnsembleModel():
             h, w = x.shape[2], x.shape[3]
             p = torch.zeros(1, self.n_classes, h, w).to(self.device)   # B,C,H,W
 
-            results = np.zeros(len(self.models), self.n_classes, h, w)
-            for model in self.models:
+            results = np.zeros(shape=(len(self.models), self.n_classes, h, w), dtype=float) # (18, 9, 240, 240) 18 是模型数
+            for i, model in enumerate(self.models):
                 output = model(x)
                 p_value = F.softmax(output, dim=1) # (shape: (batch_size, n_classes, h, w))
+                results[i] = p_value.cpu().data.numpy()
                 p = p + p_value / M_float
+
+            variance = np.var(results, axis=0)  # (9, 240, 240)
+            variance = np.sum(variance, axis=0)  # (240, 240)
+            # print(variance.min(), variance.max())
+            # return
 
             _, y_pred = torch.max(p, dim=1)
 
@@ -106,28 +149,33 @@ class EnsembleModel():
 
             dices = self.get_dices(y_pred, y_gt)
 
+            # return dices
+
             # 转numpy
             y_pred = y_pred.cpu().data.numpy() if torch.cuda.is_available() else y_pred.data.numpy()
             y_gt = y_gt.cpu().data.numpy() if torch.cuda.is_available() else y_gt.data.numpy()
 
             # show me the result
-            fig, axs = plt.subplots(2,2, sharey=True, figsize=(10,8))
+            fig, axs = plt.subplots(2,3, sharey=True, figsize=(16,8.5))
             axs[0][0].set_title("Original data")
-            axs[0][1].set_title("Ground Truth")
-            axs[1][0].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
+            axs[1][0].set_title("Ground Truth")
+            axs[0][1].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
             axs[1][1].set_title("Prediction")
-            plt.suptitle("dice : {}".format(arr2str(dices)))
+            axs[0][2].set_title("Variance [{:.3f}, {:.3f}]".format(variance.min(), variance.max()))
+            plt.suptitle("({}) dice : {}".format(title, arr2str(dices)))
             
             # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
             cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
             # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
 
             ax00 = axs[0][0].imshow( image[0,...], aspect="auto")
-            ax01 = axs[0][1].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=9)
-            ax10 = axs[1][0].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0, vmax=2.0)
+            ax10 = axs[1][0].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=9)
+            ax01 = axs[0][1].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=2.0)
             ax11 = axs[1][1].imshow( y_pred[0,...], cmap=cmap, aspect="auto", vmin=0, vmax=9)
+            ax02 = axs[0][2].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.5)
             
             fig.colorbar(ax00, ax=axs[0][0])
-            fig.colorbar(ax01, ax=axs[0][1])
             fig.colorbar(ax10, ax=axs[1][0])
+            fig.colorbar(ax01, ax=axs[0][1])
             fig.colorbar(ax11, ax=axs[1][1])
+            fig.colorbar(ax02, ax=axs[0][2])
