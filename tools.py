@@ -103,3 +103,11 @@ def load_model(model, path, device):
     model.load_state_dict(saved_params)
     model = model.to(device)
     return model
+
+
+def save_model_all(model, path):
+    torch.save(model, path)
+
+
+def load_model_all(path, device):
+    return torch.load(path).to(device)

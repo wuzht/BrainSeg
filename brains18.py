@@ -19,9 +19,16 @@ import numpy as np
 import os
 
 class BrainS18Dataset(Dataset):
-    def __init__(self, root_dir='./datasets/BrainS18', folders=['1', '5', '7', '4', '148', '070', '14']):
+    def __init__(self, 
+    root_dir='./datasets/BrainS18', 
+    folders=['1', '5', '7', '4', '148', '070', '14'],
+    file_names=['_FLAIR.png', '_reg_IR.png', '_reg_T1.png', '_segm.png'],
+    is_tumor=False):
+        if is_tumor:
+            folders = ['{}_Brats17_CBICA_AAB_1_img'.format(x) for x in folders]
+            file_names = ['_FLAIR.png', '_orgin.png', '_reg_T1.png', '_segm.png']
         # print('Preparing BrainS18Dataset {} ... '.format(folders), end='')
-        self.file_names = ['_FLAIR.png', '_reg_IR.png', '_reg_T1.png', '_segm.png']
+        self.file_names = file_names
         self.mean_std = {}  # mean and std of a volume
         self.img_paths = [] # e.g. './datasets/BrainS18/14/2'
         self._prepare_dataset(root_dir, folders)
@@ -32,7 +39,7 @@ class BrainS18Dataset(Dataset):
             paths = [os.path.join(root_dir, folder, str(i)) for i in range(48)]
             self.img_paths += paths
             self.mean_std[folder] = {}
-            for file_name in ['_FLAIR.png', '_reg_IR.png', '_reg_T1.png']:
+            for file_name in self.file_names[:3]:
                 volume = np.array([mpimg.imread(path + file_name) for path in paths])
                 self.mean_std[folder][file_name] = [volume.mean(), volume.std()]
 
@@ -41,17 +48,14 @@ class BrainS18Dataset(Dataset):
 
     def __getitem__(self, index):
         folder = self.img_paths[index].split('/')[-2]
+        slice_id = self.img_paths[index].split('/')[-1]
+
         # read imgs
         imgs = [mpimg.imread(self.img_paths[index] + fn).reshape((1, 240, 240)) for fn in self.file_names]
 
-        # imgs[3]是标签图像
-        imgs[3] *= 255
-
-        # 将第9类归为第1类
-        imgs[3][imgs[3] == 9] = 1
-
-        # 标签图像必须是LongTensor
-        imgs[3] = torch.LongTensor(imgs[3].reshape(240, 240))
+        imgs[3] *= 255                  # imgs[3]是标签图像
+        imgs[3][imgs[3] == 9] = 1       # 将第9类归为第1类
+        imgs[3] = torch.LongTensor(imgs[3].reshape(240, 240))   # 标签图像必须是LongTensor
         
         # normalization
         for i in range(3):
@@ -62,7 +66,7 @@ class BrainS18Dataset(Dataset):
             std = self.mean_std[folder][self.file_names[i]][1]
             imgs[i] = (imgs[i] - mean) / std
 
-        return imgs
+        return imgs, folder, slice_id
 
     def show_imgs(self, index):
         imgs = self.__getitem__(index)

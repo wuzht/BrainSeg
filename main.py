@@ -18,4 +18,6 @@ cfg = get_cfg()
 
 operation = Operation(cfg)
 
-operation.fit()
+# operation.load(path='./exp/dropout-retrain-brains18=0317-203007/model.pt')
+
+# operation.fit()
