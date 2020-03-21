@@ -44,20 +44,20 @@ class DropoutUNet(nn.Module):
         self.inc   = inconv(n_channels, 64)
         # self.down_dropout1 = nn.Dropout()
         self.down1 = down(64,  128)
-        self.down_dropout2 = nn.Dropout(p=0.2)
+        # self.down_dropout2 = nn.Dropout(p=0.2)
         self.down2 = down(128, 256)
-        self.down_dropout3 = nn.Dropout(p=0.2)
+        # self.down_dropout3 = nn.Dropout(p=0.2)
         self.down3 = down(256, 512)
-        self.down_dropout4 = nn.Dropout(p=0.2)
+        # self.down_dropout4 = nn.Dropout(p=0.2)
         self.down4 = down(512, 512)
         
         # self.up_dropout1 = nn.Dropout()
         self.up1  = up(1024, 256)
-        self.up_dropout2 = nn.Dropout(p=0.2)
+        self.up_dropout2 = nn.Dropout(p=0.5)
         self.up2  = up(512,  128)
-        self.up_dropout3 = nn.Dropout(p=0.2)
+        self.up_dropout3 = nn.Dropout(p=0.5)
         self.up3  = up(256,  64)
-        self.up_dropout4 = nn.Dropout(p=0.2)
+        self.up_dropout4 = nn.Dropout(p=0.5)
         self.up4  = up(128,  64)
         self.outc = outconv(64, n_classes)
 
@@ -66,13 +66,13 @@ class DropoutUNet(nn.Module):
 
         # layer1 = self.down_dropout1(layer1)
         layer2 = self.down1( layer1 )
-        layer2 = self.down_dropout2(layer2)
+        # layer2 = self.down_dropout2(layer2)
 
         layer3 = self.down2( layer2 )
-        layer3 = self.down_dropout3(layer3)
+        # layer3 = self.down_dropout3(layer3)
 
         layer4 = self.down3( layer3 )
-        layer4 = self.down_dropout4(layer4)
+        # layer4 = self.down_dropout4(layer4)
 
         layer5 = self.down4( layer4 )
 

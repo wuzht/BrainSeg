@@ -23,7 +23,7 @@ def arr2str(arr):
 
 
 class Operation:
-    def __init__(self, cfg):
+    def __init__(self, cfg, model_path=None):
         self.cfg = cfg
         self.device = cfg.device
 
@@ -46,10 +46,13 @@ class Operation:
         )
 
         # Model
-        if not cfg.dropout:
-            self.model = UNet(n_channels=1, n_classes=cfg.n_classes)
+        if model_path is None:
+            if not cfg.dropout:
+                self.model = UNet(n_channels=1, n_classes=cfg.n_classes)
+            else:
+                self.model = DropoutUNet(n_channels=1, n_classes=cfg.n_classes)
         else:
-            self.model = DropoutUNet(n_channels=1, n_classes=cfg.n_classes)
+            self.load(model_path, mode=False)
 
         # Criterion
         if cfg.is_class_weight:
@@ -70,6 +73,9 @@ class Operation:
         self.cfg.log.critical("optimizer: \n{}".format(self.optimizer))
         self.cfg.log.critical("model: \n{}".format(self.model))
 
+
+    def load_val_data(self, is_tumor=True):
+        self.val_data = BrainS18Dataset(folders=self.cfg.val_folds, is_tumor=is_tumor)
 
     def load(self, path, mode=True):
         """
@@ -180,33 +186,41 @@ class Operation:
             self.cfg.log.info("Val   dice: {}".format(arr2str(val_dices)))
 
             self.save(self.cfg.model_path, mode=True)
-            self.save(self.cfg.model_path, mode=False)
+            self.save(self.cfg.model_all_path, mode=False)
 
         self.cfg.log.critical('Train finished')
 
 
     def predict(self, image, y_gt):
-        with torch.no_grad():
+        """
+        N: n_classes        (e.g. 9)
+        B: batch_size       (e.g. 10)
+        C: image channels   (e.g. 1)
+        H: image height     (e.g. 240)
+        W: image width      (e.g. 240)
+        """
+        N, B = self.cfg.n_classes, 1
+        C, H, W = image.shape
+        if self.cfg.dropout:
+            self.model.train()
+        else:
             self.model.eval()
-            if self.cfg.dropout:
-                self.model.train()
-            x = torch.from_numpy(image).to(self.device)
-            x = x.reshape(1, x.shape[0], x.shape[1], x.shape[2])    # B,C,H,W
 
-            y_gt = y_gt.to(self.device)
-            y_gt = y_gt.reshape(1, y_gt.shape[0], y_gt.shape[1])    # B,H,W
+        with torch.no_grad():
+            x = torch.from_numpy(image).to(self.device).reshape(B, C, H, W) # B,C,H,W
+            y_gt = y_gt.to(self.device).reshape(B, H, W)
 
             output = self.model(x)
             p = F.softmax(output, dim=1).cpu().data.numpy()
-            entropy = -np.sum(p * np.log(p), axis=1) # (shape: (batch_size, h, w))
+            entropy = -np.sum(p * np.log(p), axis=1) # B,H,W
 
             _, y_pred = torch.max(output, dim=1)
 
             dices = self.get_dices(y_pred, y_gt)
 
             # 转numpy
-            y_pred = y_pred.cpu().data.numpy()
-            y_gt = y_gt.cpu().data.numpy()
+            y_pred = y_pred.cpu().data.numpy()[0]
+            y_gt = y_gt.cpu().data.numpy()[0]
 
             # show me the result
             fig, axs = plt.subplots(2,2, sharey=True, figsize=(10,8))
@@ -221,9 +235,9 @@ class Operation:
             # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
 
             ax00 = axs[0][0].imshow( image[0,...], aspect="auto")
-            ax01 = axs[0][1].imshow( y_gt[0], cmap=cmap, aspect="auto", vmin=0, vmax=9)
+            ax01 = axs[0][1].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9)
             ax10 = axs[1][0].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0, vmax=2)
-            ax11 = axs[1][1].imshow( y_pred[0,...], cmap=cmap, aspect="auto", vmin=0, vmax=9)
+            ax11 = axs[1][1].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9)
             
             fig.colorbar(ax00, ax=axs[0][0])
             fig.colorbar(ax01, ax=axs[0][1])
@@ -243,7 +257,9 @@ class Operation:
         N = self.cfg.n_classes
         B = 1
         C, H, W = image.shape
-        M = len(self.models) if mode == "ensemble" else 18
+        M = 18 if sample else len(self.models)
+        if sample:
+            self.model.train()
 
         with torch.no_grad():
             x = torch.from_numpy(image).to(self.device).reshape(B, C, H, W) # B,C,H,W
@@ -341,5 +357,6 @@ class Operation:
         print("M (number of models): {}".format(len(self.models)))
 
 
-    
+    def rm_dir(self):
+        os.system('rm -rf {}'.format(self.cfg.cur_dir))
         

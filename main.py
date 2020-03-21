@@ -20,4 +20,4 @@ operation = Operation(cfg)
 
 # operation.load(path='./exp/dropout-retrain-brains18=0317-203007/model.pt')
 
-# operation.fit()
+operation.fit()
