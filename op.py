@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from unet import UNet, DropoutUNet
 from dice_loss import dice_coeff
 from brains18 import BrainS18Dataset
-from tools import ImProgressBar, save_model, load_model, save_model_all, load_model_all
+from tools import ImProgressBar, save_model, load_model, save_model_all, load_model_all, Logger
 
 def arr2str(arr):
     s = '['
@@ -26,6 +26,7 @@ class Operation:
     def __init__(self, cfg, model_path=None):
         self.cfg = cfg
         self.device = cfg.device
+        self.init_environment()
 
         # Data
         self.train_data = BrainS18Dataset(folders=cfg.train_folds)
@@ -72,6 +73,17 @@ class Operation:
         self.cfg.log.critical("criterion: \n{}".format(self.criterion))
         self.cfg.log.critical("optimizer: \n{}".format(self.optimizer))
         self.cfg.log.critical("model: \n{}".format(self.model))
+
+    def init_environment(self):
+        # 创建文件夹
+        if not os.path.exists(self.cfg.exp_dir):
+            os.makedirs(self.cfg.exp_dir)
+        if not os.path.exists(self.cfg.cur_dir):
+            os.makedirs(self.cfg.cur_dir)
+
+        # Logger对象
+        self.cfg.log = Logger(self.cfg.log_path, level='debug').logger
+        self.cfg.log.info('config:\n{}'.format(self.cfg.cfg2str(self.cfg)))
 
 
     def load_val_data(self, is_tumor=True):
@@ -128,9 +140,9 @@ class Operation:
         pbar.finish()
         return total_loss / len(data_loader)
 
-
     def eval_model(self, data_loader):
         with torch.no_grad():
+            pbar = ImProgressBar(len(data_loader))
             self.model.eval()
             if self.cfg.dropout:
                 self.model.train()
@@ -138,7 +150,10 @@ class Operation:
             total_loss = 0
             # dices for each class
             total_dices = np.zeros(self.cfg.n_classes)
-            for i, (imgs, _, _) in enumerate(data_loader):
+
+            # partitioned_dices = np.zeros(shape=(3, self.cfg.n_classes))     # 分块dices, 分下中上层，0-15下，16-31中，32-47上
+
+            for i, (imgs, _, slice_id) in enumerate(data_loader):
                 batch_x = imgs[2].to(self.device)
                 batch_y = imgs[3].to(self.device)
 
@@ -148,8 +163,98 @@ class Operation:
                 
                 _, batch_y_pred = torch.max(out, dim=1)
 
-                total_dices += self.get_dices(batch_y_pred, batch_y)
+                cur_dices = self.get_dices(batch_y_pred, batch_y)
+
+                total_dices += cur_dices
+                pbar.update(i)
+            pbar.finish()
             return total_dices / (i+1), total_loss / (i+1)
+
+
+    def eval_model_dices(self, data):
+        N, B = self.cfg.n_classes, 1
+        C, H, W = data[0][0][2].shape
+
+        pbar = ImProgressBar(len(data))
+        self.model.eval()
+        if self.cfg.dropout:
+            self.model.train()
+
+        # dices for each class
+        total_dices = np.zeros(self.cfg.n_classes)
+        partitioned_dices = np.zeros(shape=(3, self.cfg.n_classes))     # 分块dices, 分下中上层，0-15下，16-31中，32-47上
+
+        with torch.no_grad():
+            for i in range(len(data)):
+                imgs, _, slice_id = data[i]
+                x = torch.from_numpy(imgs[2]).to(self.device).reshape(B, C, H, W) # B,C,H,W
+                y_gt = imgs[3].to(self.device).reshape(B, H, W)
+
+                output = self.model(x)
+                _, y_pred = torch.max(output, dim=1)
+                dices = self.get_dices(y_pred, y_gt)
+                total_dices += dices
+                partitioned_dices[int(slice_id/16)] += dices
+                pbar.update(i)
+            pbar.finish()
+
+            total_dices /= (i+1)
+            partitioned_dices *= 3 / (i+1)
+            self.print_dices(total_dices, partitioned_dices)
+            return total_dices, partitioned_dices
+
+    
+    def eval_sample_model_dices(self, data, sample):
+        N, B = self.cfg.n_classes, 1
+        C, H, W = data[0][0][2].shape
+        M = 18 if sample else len(self.models)
+        pbar = ImProgressBar(len(data))
+        self.model.eval()
+        if self.cfg.dropout:
+            self.model.train()
+
+        # dices for each class
+        total_dices = np.zeros(self.cfg.n_classes)
+        partitioned_dices = np.zeros(shape=(3, self.cfg.n_classes))     # 分块dices, 分下中上层，0-15下，16-31中，32-47上
+
+        with torch.no_grad():
+            for i in range(len(data)):
+                imgs, _, slice_id = data[i]
+                x = torch.from_numpy(imgs[2]).to(self.device).reshape(B, C, H, W) # B,C,H,W
+                y_gt = imgs[3].to(self.device).reshape(B, H, W)
+                results = torch.zeros(M, N, H, W).to(self.device)               # (18, 9, 240, 240) 18 是模型数
+
+                # # 预测M次
+                if sample:
+                    for j in range(M):
+                        output = self.model(x)
+                        results[j] = F.softmax(output, dim=1)
+                else:
+                    for j, model in enumerate(self.models):
+                        output = model(x)           # B,N,H,W           
+                        results[j] = F.softmax(output, dim=1)
+
+                p = torch.mean(results, dim=0, keepdim=True)            # B,N,H,W
+                _, y_pred = torch.max(p, dim=1)
+                dices = self.get_dices(y_pred, y_gt)
+                total_dices += dices
+                partitioned_dices[int(slice_id/16)] += dices
+                pbar.update(i)
+            pbar.finish()
+
+            total_dices /= (i+1)
+            partitioned_dices *= 3 / (i+1)
+            self.print_dices(total_dices, partitioned_dices)
+            return total_dices, partitioned_dices
+
+
+    def print_dices(self, total_dices, partitioned_dices):
+        self.cfg.log.info("")
+        self.cfg.log.info("Class     : {} [c1-c8 mean]".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
+        self.cfg.log.info("Total dice: {} [{:.3f}]".format(arr2str(total_dices), total_dices[1:].mean()))
+        self.cfg.log.info("Bottomdice: {} [{:.3f}]".format(arr2str(partitioned_dices[0]), partitioned_dices[0][1:].mean()))
+        self.cfg.log.info("Mid   dice: {} [{:.3f}]".format(arr2str(partitioned_dices[1]), partitioned_dices[1][1:].mean()))
+        self.cfg.log.info("Up    dice: {} [{:.3f}]".format(arr2str(partitioned_dices[2]), partitioned_dices[2][1:].mean()))
 
 
     def get_dices(self, y_pred, y_gt):
@@ -170,6 +275,10 @@ class Operation:
         self.criterion.to(self.device)
 
         self.cfg.log.critical('Start training')
+
+        best_epoch = 0
+        best_val_dice = 0
+
         for epoch in range(self.cfg.epochs):
             self.cfg.log.info('[Epoch {}/{}]'.format(epoch + 1, self.cfg.epochs))
 
@@ -181,17 +290,21 @@ class Operation:
             self.cfg.log.info("Train Loss: {:.4f}".format(train_loss))
             self.cfg.log.info("Val   Loss: {:.4f}".format(val_loss))
             
-            self.cfg.log.info("Class     : {}".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
-            self.cfg.log.info("Train dice: {}".format(arr2str(train_dices)))
-            self.cfg.log.info("Val   dice: {}".format(arr2str(val_dices)))
+            self.cfg.log.info("Class     : {} [c1-c8 mean]".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
+            self.cfg.log.info("Train dice: {} [{:.3f}]".format(arr2str(train_dices), train_dices[1:].mean()))
+            self.cfg.log.info("Val   dice: {} [{:.3f}]".format(arr2str(val_dices), val_dices[1:].mean()))
 
-            self.save(self.cfg.model_path, mode=True)
-            self.save(self.cfg.model_all_path, mode=False)
+            if val_dices[1:].mean() > best_val_dice:
+                best_epoch = epoch + 1
+                best_val_dice = val_dices[1:].mean()
+                self.save(self.cfg.model_path, mode=True)
+                self.save(self.cfg.model_all_path, mode=False)
 
+            self.cfg.log.info("best val dice: [{:.3f}] (best epoch: {})".format(best_val_dice, best_epoch))
         self.cfg.log.critical('Train finished')
 
 
-    def predict(self, image, y_gt):
+    def predict(self, image, y_gt, title=""):
         """
         N: n_classes        (e.g. 9)
         B: batch_size       (e.g. 10)
@@ -228,7 +341,8 @@ class Operation:
             axs[0][1].set_title("Ground Truth")
             axs[1][0].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
             axs[1][1].set_title("Prediction")
-            plt.suptitle("dice : {}".format(arr2str(dices)))
+            # plt.suptitle("dice : {}".format(arr2str(dices)))
+            plt.suptitle("({}) dice : {} [c1-c8 mean: {:.3f}]".format(title, arr2str(dices), dices[1:].mean()))
             
             # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
             cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
@@ -305,7 +419,7 @@ class Operation:
         axs[0][1].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
         axs[1][1].set_title("Prediction")
         axs[0][2].set_title("Variance [{:.3f}, {:.3f}]".format(variance.min(), variance.max()))
-        plt.suptitle("({}) dice : {}".format(title, arr2str(dices)))
+        plt.suptitle("({}) dice : {} [c1-c8 mean: {:.3f}]".format(title, arr2str(dices), dices[1:].mean()))
         
         # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
         cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
@@ -343,7 +457,18 @@ class Operation:
             'E-brains18=0314-213325', 
             'E-brains18=0314-214800', 
             'E-brains18=0314-220258', 
-            'E-brains18=0314-221005'
+            'E-brains18=0314-221005',
+
+            'E-brains18=0321-123957',
+            'E-brains18=0321-124126',
+
+            'E-brains18=0325-004701',
+            'E-brains18=0325-004727',
+
+            'E-brains18=0325-125420',
+            'E-brains18=0325-131335',
+            'E-brains18=0325-131349',
+            'E-brains18=0325-131402'
         ]
         model_paths = ['exp/{}/model.pt'.format(x) for x in model_paths]
 
@@ -353,8 +478,8 @@ class Operation:
             model = load_model(model, path, self.device)
             model.eval()
             self.models.append(model)
-            print("Model loaded from {}".format(path)) 
-        print("M (number of models): {}".format(len(self.models)))
+            self.cfg.log.info("Model loaded from {}".format(path)) 
+        self.cfg.log.info("M (number of models): {}".format(len(self.models)))
 
 
     def rm_dir(self):

@@ -14,7 +14,7 @@ parser.add_argument("--exp_dir", type=str, default='./exp', help='实验记录�
 # Model
 
 # Train
-parser.add_argument("--epochs", type=int, default=512, help='迭代次数')
+parser.add_argument("--epochs", type=int, default=256, help='迭代次数')
 parser.add_argument("--lr", type=float, default=1e-3, help='学习率')
 parser.add_argument("--weight_decay", type=float, default=5e-4, help='权重衰减')
 parser.add_argument("--momentum", type=float, default=0.9, help='动量')
@@ -23,9 +23,9 @@ parser.add_argument("--dropout", type=bool, default=False)
 parser.add_argument("--is_class_weight", type=bool, default=False)
 
 # Data
-parser.add_argument("--data_name", type=str, default='E-brains18', help='数据集名称')
+parser.add_argument("--data_name", type=str, default='test-brains18', help='数据集名称')
 parser.add_argument("--n_classes", type=int, default=9, help='标签数（背景是第0类,第9类归为第1类）')
-parser.add_argument("--batch_size", type=int, default=10, help='批大小')
+parser.add_argument("--batch_size", type=int, default=30, help='批大小')
 parser.add_argument("--num_workers", type=int, default=8, help='线程数')
 parser.add_argument("--folders", type=list, default=['1', '5', '7', '4', '148', '070', '14'], help='文件夹')
 parser.add_argument("--is_tumor", type=bool, default=False, help='是否肿瘤数据')
@@ -39,7 +39,7 @@ cfg = parser.parse_args(args=[]) # jupyter运行
 cfg.train_folds = [x for x in cfg.folders if x not in cfg.val_folds]     # 训练集文件夹
 
 # Device
-gpu_id, cfg.memory_gpu = tools.choose_gpu()
+gpu_id, cfg.memory_gpu = tools.choose_gpu(gpu_not_use=[0])
 cfg.device = torch.device('cuda:{}'.format(gpu_id) if torch.cuda.is_available() else 'cpu')
 
 # Paths
@@ -47,15 +47,6 @@ cfg.cur_dir = os.path.join(cfg.exp_dir, '{}={}'.format(cfg.data_name, now_time))
 cfg.model_path = os.path.join(cfg.cur_dir, 'model.pt')                              # 模型参数路径(保存模型参数)
 cfg.model_all_path = os.path.join(cfg.cur_dir, 'model.pth')                         # 模型路径(保存完整模型)
 cfg.log_path = os.path.join(cfg.cur_dir, 'exp.log')                                 # log文件路径
-
-# 创建文件夹
-if not os.path.exists(cfg.exp_dir):
-    os.makedirs(cfg.exp_dir)
-if not os.path.exists(cfg.cur_dir):
-    os.makedirs(cfg.cur_dir)
-
-# Logger对象
-cfg.log = tools.Logger(cfg.log_path, level='debug').logger
 
 ###########################
 
@@ -72,4 +63,5 @@ def cfg2str(cfg):
         s += '{}: {}\n'.format(k, v)
     return s
 
-cfg.log.info('config:\n{}'.format(cfg2str(cfg)))
+cfg.print_cfg = print_cfg
+cfg.cfg2str = cfg2str
