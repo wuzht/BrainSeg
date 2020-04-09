@@ -30,15 +30,21 @@ class DiceCoeff(Function):
 
 
 def dice_coeff(input, target, device):
-    """Dice coeff for batches"""
+    """
+    Dice coeff for batches
+    input: B,H,W
+    target: B,H,W    
+    """
     if input.is_cuda:
         s = torch.FloatTensor(1).to(device).zero_()
     else:
         s = torch.FloatTensor(1).zero_()
 
+    # iteration over B (batch_size)
     for i, c in enumerate(zip(input, target)):
         s = s + DiceCoeff().forward(c[0], c[1])
 
+    # return the sum dicecoeff over B (batch_size)
     return s
 
 

@@ -117,7 +117,7 @@ class Operation:
             self.cfg.log.info("Model saved at {}".format(path))
 
 
-    def train(self, data_loader):
+    def train(self, data_loader, is_dropout=True):
         total_loss = 0
         self.model.train()
         pbar = ImProgressBar(len(data_loader))
@@ -129,7 +129,7 @@ class Operation:
             batch_y = imgs[3].to(self.device)
 
             # forward
-            batch_y_pred = self.model(batch_x)
+            batch_y_pred = self.model(batch_x, is_dropout=is_dropout)
             loss = self.criterion(batch_y_pred, batch_y)
 
             # backward and optimize
@@ -142,7 +142,7 @@ class Operation:
         pbar.finish()
         return total_loss / num
 
-    def eval_model(self, data_loader):
+    def eval_model(self, data_loader, is_dropout=False):
         with torch.no_grad():
             pbar = ImProgressBar(len(data_loader))
             self.model.eval()
@@ -156,7 +156,7 @@ class Operation:
                 batch_x = imgs[2].to(self.device)
                 batch_y = imgs[3].to(self.device)
 
-                out = self.model(batch_x)
+                out = self.model(batch_x, is_dropout=is_dropout)
                 loss = self.criterion(out, batch_y)
                 total_loss += loss.item()
                 
@@ -170,14 +170,12 @@ class Operation:
             return total_dices / num, total_loss / num
 
 
-    def eval_model_dices(self, data):
+    def eval_model_dices(self, data, is_dropout=False):
         N, B = self.cfg.n_classes, 1
         C, H, W = data[0][0][2].shape
 
         pbar = ImProgressBar(len(data))
         self.model.eval()
-        # if self.cfg.dropout:
-        #     self.model.train()
 
         # dices for each class
         total_dices = np.zeros(self.cfg.n_classes)
@@ -189,7 +187,7 @@ class Operation:
                 x = torch.from_numpy(imgs[2]).to(self.device).reshape(B, C, H, W) # B,C,H,W
                 y_gt = imgs[3].to(self.device).reshape(B, H, W)
 
-                output = self.model(x)
+                output = self.model(x, is_dropout=is_dropout)
                 _, y_pred = torch.max(output, dim=1)
                 dices = self.get_dices(y_pred, y_gt)
                 total_dices += dices
@@ -203,7 +201,7 @@ class Operation:
             return total_dices, partitioned_dices
 
     
-    def eval_sample_model_dices(self, data, sample):
+    def eval_sample_model_dices(self, data, sample, is_dropout=True):
         N, B = self.cfg.n_classes, 1
         C, H, W = data[0][0][2].shape
         T = self.cfg.sample_T if sample else len(self.models)
@@ -224,7 +222,7 @@ class Operation:
                 # # 预测T次
                 if sample:
                     for j in range(T):
-                        output = self.model(x)
+                        output = self.model(x, is_dropout=is_dropout)
                         results[j] = F.softmax(output, dim=1)
                 else:
                     for j, model in enumerate(self.models):
@@ -279,16 +277,16 @@ class Operation:
         for epoch in range(self.cfg.epochs):
             self.cfg.log.info('[Epoch {}/{}]'.format(epoch + 1, self.cfg.epochs))
 
-            loss = self.train(self.train_loader)
+            loss = self.train(self.train_loader, is_dropout=True)
             
-            train_dices, train_loss = self.eval_model(self.train_loader)
-            val_dices, val_loss = self.eval_model(self.val_loader)
+            train_dices, train_loss = self.eval_model(self.train_loader, is_dropout=False)
+            val_dices, val_loss = self.eval_model(self.val_loader, is_dropout=False)
 
-            self.cfg.log.info("Train Loss: {:.6f} (from criterion)".format(loss))
-            self.cfg.log.info("Train Loss: {:.6f}".format(train_loss))
-            self.cfg.log.info("Val   Loss: {:.6f}".format(val_loss))
+            self.cfg.log.info("Train Loss: {:.6f} (from train)".format(loss))
+            self.cfg.log.info("Train Loss: {:.6f} (from eval )".format(train_loss))
+            self.cfg.log.info("Val   Loss: {:.6f} (from eval )".format(val_loss))
             
-            self.cfg.log.info("Class     : {} [c1-c8 mean]".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
+            self.cfg.log.info("Class     : {} [mDice c1-8]".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
             self.cfg.log.info("Train dice: {} [{:.3f}]".format(arr2str(train_dices), train_dices[1:].mean()))
             self.cfg.log.info("Val   dice: {} [{:.3f}]".format(arr2str(val_dices), val_dices[1:].mean()))
 
@@ -303,7 +301,7 @@ class Operation:
         self.cfg.log.critical('Train finished')
 
 
-    def predict(self, image, y_gt, title=""):
+    def predict(self, image, y_gt, title="", is_dropout=False):
         """
         N: n_classes        (e.g. 9)
         B: batch_size       (e.g. 10)
@@ -319,7 +317,7 @@ class Operation:
             x = torch.from_numpy(image).to(self.device).reshape(B, C, H, W) # B,C,H,W
             y_gt = y_gt.to(self.device).reshape(B, H, W)
 
-            output = self.model(x)
+            output = self.model(x, is_dropout=is_dropout)
             p = F.softmax(output, dim=1).cpu().data.numpy()
             entropy = -np.sum(p * np.log(p), axis=1) # B,H,W
 
@@ -355,7 +353,7 @@ class Operation:
             fig.colorbar(ax11, ax=axs[1][1])
 
 
-    def predict_sample(self, image, y_gt, title="", sample=False):
+    def predict_sample(self, image, y_gt, title="", sample=True, is_dropout=True):
         """
         N: n_classes        (e.g. 9)
         B: batch_size       (e.g. 10)
@@ -378,7 +376,7 @@ class Operation:
             # 预测T次
             if sample:
                 for i in range(T):
-                    output = self.model(x)
+                    output = self.model(x, is_dropout=is_dropout)
                     results[i] = F.softmax(output, dim=1)
             else:
                 for i, model in enumerate(self.models):
@@ -424,7 +422,7 @@ class Operation:
         ax10 = axs[1][0].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9)
         ax01 = axs[0][1].imshow( entropy,  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=2.0)
         ax11 = axs[1][1].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9)
-        ax02 = axs[0][2].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.12)
+        ax02 = axs[0][2].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.2)
         
         fig.colorbar(ax00, ax=axs[0][0])
         fig.colorbar(ax10, ax=axs[1][0])

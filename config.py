@@ -21,14 +21,14 @@ parser.add_argument("--momentum", type=float, default=0.9, help='动量')
 parser.add_argument("--epsilon", type=float, default=1e-8)
 parser.add_argument("--dropout", type=bool, default=True, help='是否使用Dropout模型')
 parser.add_argument("--is_class_weight", type=bool, default=False, help='是否应用class weight')
-parser.add_argument("--model_type", type=str, default='Mid1', 
+parser.add_argument("--model_type", type=str, default='No', 
     choices=['All','Encoder','Decoder','Center1','Center2','Mid1','Mid1-Encoder','Mid1-Decoder','Classifier','No'],
     help='DropoutUnet的类型')
 parser.add_argument("--drop_rate", type=float, default=0.2, help='Dropout probability')
-parser.add_argument("--sample_T", type=int, default=50, help='采样T次')
+parser.add_argument("--sample_T", type=int, default=20, help='采样T次')
 
 # Data
-parser.add_argument("--is_test", type=bool, default=False)
+parser.add_argument("--is_test", type=bool, default=True)
 parser.add_argument("--data_name", type=str, default='brains18', help='数据集名称')
 parser.add_argument("--n_classes", type=int, default=9, help='标签数（背景是第0类,第9类归为第1类）')
 parser.add_argument("--batch_size", type=int, default=16, help='批大小')
