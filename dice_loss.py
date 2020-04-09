@@ -39,7 +39,7 @@ def dice_coeff(input, target, device):
     for i, c in enumerate(zip(input, target)):
         s = s + DiceCoeff().forward(c[0], c[1])
 
-    return s / (i + 1)
+    return s
 
 
 class JaccardCoeff(Function):
