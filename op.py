@@ -10,7 +10,7 @@ from torch import optim
 import torch.utils.data as Data
 import torch.nn.functional as F
 
-from unet import UNet, DropoutUNet
+from unet import DropoutUNet
 from dice_loss import dice_coeff
 from brains18 import BrainS18Dataset
 from tools import ImProgressBar, save_model, load_model, save_model_all, load_model_all, Logger
@@ -23,7 +23,7 @@ def arr2str(arr):
 
 
 class Operation:
-    def __init__(self, cfg, model_path=None):
+    def __init__(self, cfg):
         self.cfg = cfg
         self.device = cfg.device
         self.init_environment()
@@ -47,13 +47,7 @@ class Operation:
         )
 
         # Model
-        if model_path is None:
-            if not cfg.dropout:
-                self.model = UNet(n_channels=1, n_classes=cfg.n_classes)
-            else:
-                self.model = DropoutUNet(n_channels=1, n_classes=cfg.n_classes, model_type=cfg.model_type, drop_rate=cfg.drop_rate)
-        else:
-            self.load(model_path, mode=False)
+        self.model = DropoutUNet(n_channels=1, n_classes=cfg.n_classes, model_type=cfg.model_type, drop_rate=cfg.drop_rate)
 
         # Criterion
         if cfg.is_class_weight:
@@ -95,6 +89,7 @@ class Operation:
             True: 加载模型参数
             False: 加载完整模型
         """
+        self.model = DropoutUNet(n_channels=1, n_classes=self.cfg.n_classes, model_type=self.cfg.model_type, drop_rate=self.cfg.drop_rate)
         if mode:
             self.model = load_model(self.model, path, self.device)
             self.cfg.log.info("Model param loaded from {}".format(path))
@@ -143,6 +138,7 @@ class Operation:
         return total_loss / num
 
     def eval_model(self, data_loader, is_dropout=False):
+        # 评价单个模型
         with torch.no_grad():
             pbar = ImProgressBar(len(data_loader))
             self.model.eval()
@@ -171,6 +167,7 @@ class Operation:
 
 
     def eval_model_dices(self, data, is_dropout=False):
+        # 单个模型的dices
         N, B = self.cfg.n_classes, 1
         C, H, W = data[0][0][2].shape
 
@@ -202,6 +199,7 @@ class Operation:
 
     
     def eval_sample_model_dices(self, data, sample, is_dropout=True):
+        # 采样模型或集成模型的dices
         N, B = self.cfg.n_classes, 1
         C, H, W = data[0][0][2].shape
         T = self.cfg.sample_T if sample else len(self.models)
@@ -335,7 +333,6 @@ class Operation:
             axs[0][1].set_title("Ground Truth")
             axs[1][0].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
             axs[1][1].set_title("Prediction")
-            # plt.suptitle("dice : {}".format(arr2str(dices)))
             plt.suptitle("({}) dice : {} [c1-c8 mean: {:.3f}]".format(title, arr2str(dices), dices[1:].mean()))
             
             # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
@@ -401,8 +398,9 @@ class Operation:
             y_pred = y_pred.cpu().data.numpy()[0]
             y_gt = y_gt.cpu().data.numpy()[0]
 
-            self.show_fig(image, y_gt, entropy, y_pred, variance, title, dices)
-
+            self.save_figs(image, y_gt, entropy, y_pred, variance, title, dices)
+            # self.show_fig(image, y_gt, entropy, y_pred, variance, title, dices)
+            
 
     def show_fig(self, image, y_gt, entropy, y_pred, variance, title, dices):
         # show me the result
@@ -418,11 +416,11 @@ class Operation:
         cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
         # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
 
-        ax00 = axs[0][0].imshow( image[0], aspect="auto")
+        ax00 = axs[0][0].imshow( image[0], aspect="auto", cmap='gray')
         ax10 = axs[1][0].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9)
         ax01 = axs[0][1].imshow( entropy,  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=2.0)
         ax11 = axs[1][1].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9)
-        ax02 = axs[0][2].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.2)
+        ax02 = axs[0][2].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.35)
         
         fig.colorbar(ax00, ax=axs[0][0])
         fig.colorbar(ax10, ax=axs[1][0])
@@ -430,44 +428,83 @@ class Operation:
         fig.colorbar(ax11, ax=axs[1][1])
         fig.colorbar(ax02, ax=axs[0][2])
 
+
+    def save_figs(self, image, y_gt, entropy, y_pred, variance, title, dices):
+        # 创建文件夹
+        if not os.path.exists(self.cfg.result_dir):
+            os.makedirs(self.cfg.result_dir)
+
+        # show me the result
+        fig, axs = plt.subplots(nrows=1,ncols=5, sharey=True, figsize=(21,4))
+        fig.tight_layout() # 调整整体空白
+        plt.subplots_adjust(wspace=0, hspace=0) # 调整子图间距
+        axs[0].set_title("Original data")
+        axs[1].set_title("Ground Truth")
+        axs[3].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
+        axs[2].set_title("Prediction")
+        axs[4].set_title("Variance [{:.3f}, {:.3f}]".format(variance.min(), variance.max()))
+        # plt.suptitle("({}) dice : {} [c1-c8 mean: {:.3f}]".format(title, arr2str(dices), dices[1:].mean()))
+        for i in range(5):
+            axs[i].axis('off') 
+
+        # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
+        cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
+        # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
+
+        ax00 = axs[0].imshow( image[0], aspect="auto", cmap='gray')
+        ax10 = axs[1].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9)
+        ax01 = axs[3].imshow( entropy,  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=2.0)
+        ax11 = axs[2].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9)
+        ax02 = axs[4].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.33)
+        
+        fig.colorbar(ax00, ax=axs[0])
+        fig.colorbar(ax10, ax=axs[1])
+        fig.colorbar(ax01, ax=axs[3])
+        fig.colorbar(ax11, ax=axs[2])
+        fig.colorbar(ax02, ax=axs[4])
+
+        name = title
+        plt.savefig(os.path.join(self.cfg.result_dir, name))
+
     
     def ensemble_load_models(self):
         model_paths = [
-            'E-brains18=0314-180735', 
-            'E-brains18=0314-182316', 
-            'E-brains18=0314-184617', 
-            'E-brains18=0314-184900', 
-            'E-brains18=0314-191031', 
-            'E-brains18=0314-191616', 
-            'E-brains18=0314-193439', 
-            'E-brains18=0314-194709', 
-            'E-brains18=0314-195238', 
-            'E-brains18=0314-200317', 
-            'E-brains18=0314-201357', 
-            'E-brains18=0314-203550', 
-            'E-brains18=0314-205210', 
-            'E-brains18=0314-212917', 
-            'E-brains18=0314-213325', 
-            'E-brains18=0314-214800', 
-            'E-brains18=0314-220258', 
-            'E-brains18=0314-221005',
-
-            'E-brains18=0321-123957',
-            'E-brains18=0321-124126',
-
-            'E-brains18=0325-004701',
-            'E-brains18=0325-004727',
-
-            'E-brains18=0325-125420',
-            'E-brains18=0325-131335',
-            'E-brains18=0325-131349',
-            'E-brains18=0325-131402'
-        ]
-        model_paths = ['exp/{}/model.pt'.format(x) for x in model_paths]
+            'D-No-brains18=0409-160305',
+            'D-No-brains18=0409-160500',
+            'D-No-brains18=0409-160529',
+            'D-No-brains18=0409-160600',
+            'D-No-brains18=0409-160621',
+            'D-No-brains18=0409-160701',
+            'D-No-brains18=0409-165858',
+            'D-No-brains18=0409-165911',
+            'D-No-brains18=0409-165924',
+            'D-No-brains18=0409-165939',
+            'D-No-brains18=0409-165954',
+            'D-No-brains18=0409-170009',
+            'D-No-brains18=0409-182832',
+            'D-No-brains18=0409-182843',
+            'D-No-brains18=0409-182855',
+            'D-No-brains18=0409-182906',
+            'D-No-brains18=0409-182919',
+            'D-No-brains18=0409-182933',
+            'D-No-brains18=0409-192735',
+            'D-No-brains18=0409-192747',
+            'D-No-brains18=0409-192753',
+            'D-No-brains18=0409-192804',
+            'D-No-brains18=0409-192816',
+            'D-No-brains18=0409-192831',
+            'D-No-brains18=0409-201646',
+            'D-No-brains18=0409-201702',
+            'D-No-brains18=0409-201705',
+            'D-No-brains18=0409-201722',
+            'D-No-brains18=0409-201738',
+            'D-No-brains18=0409-201752'
+        ] # 30
+        model_paths = ['exp/{}/model_best.pt'.format(x) for x in model_paths]
 
         self.models = []
         for path in model_paths:
-            model = UNet(n_channels=1, n_classes=self.cfg.n_classes)
+            model = DropoutUNet(n_channels=1, n_classes=self.cfg.n_classes, model_type='No')
             model = load_model(model, path, self.device)
             model.eval()
             self.models.append(model)
@@ -477,4 +514,3 @@ class Operation:
 
     def rm_dir(self):
         os.system('rm -rf {}'.format(self.cfg.cur_dir))
-        

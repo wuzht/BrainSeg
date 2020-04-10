@@ -19,13 +19,19 @@ parser.add_argument("--lr", type=float, default=1e-3, help='学习率')
 parser.add_argument("--weight_decay", type=float, default=5e-4, help='权重衰减')
 parser.add_argument("--momentum", type=float, default=0.9, help='动量')
 parser.add_argument("--epsilon", type=float, default=1e-8)
-parser.add_argument("--dropout", type=bool, default=True, help='是否使用Dropout模型')
+# parser.add_argument("--dropout", type=bool, default=True, help='是否使用Dropout模型')
 parser.add_argument("--is_class_weight", type=bool, default=False, help='是否应用class weight')
-parser.add_argument("--model_type", type=str, default='No', 
-    choices=['All','Encoder','Decoder','Center1','Center2','Mid1','Mid1-Encoder','Mid1-Decoder','Classifier','No'],
-    help='DropoutUnet的类型')
+parser.add_argument("--model_type", type=str, default='Encoder', 
+    choices=[
+        'All','Encoder','Decoder','Center1','Center2',
+        'Mid1','Mid1-Encoder','Mid1-Decoder',
+        'Mid2','Mid2-Encoder','Mid2-Decoder',
+        'Classifier','No'
+    ],
+    help='DropoutUnet的类型'
+)
 parser.add_argument("--drop_rate", type=float, default=0.2, help='Dropout probability')
-parser.add_argument("--sample_T", type=int, default=20, help='采样T次')
+parser.add_argument("--sample_T", type=int, default=30, help='采样T次')
 
 # Data
 parser.add_argument("--is_test", type=bool, default=True)
@@ -47,14 +53,14 @@ cfg.train_folds = [x for x in cfg.folders if x not in cfg.val_folds]     # 训�
 # Device
 gpu_id, cfg.memory_gpu = tools.choose_gpu(gpu_not_use=[0])
 cfg.device = torch.device('cuda:{}'.format(gpu_id) if torch.cuda.is_available() else 'cpu')
+torch.cuda.set_device(cfg.device)
 
 # Paths
 if cfg.is_test:
     cfg.cur_dir = os.path.join(cfg.exp_dir, 'test-{}={}'.format(cfg.data_name, now_time))    # 当前实验记录文件夹
 else:
-    cfg.cur_dir = os.path.join(cfg.exp_dir, '{}-{}{}={}'.format(
-        'D' if cfg.dropout else 'E',
-        (cfg.model_type + '-') if cfg.dropout else '',
+    cfg.cur_dir = os.path.join(cfg.exp_dir, 'D-{}-{}={}'.format(
+        cfg.model_type,
         cfg.data_name,
         now_time)
     )    # 当前实验记录文件夹
@@ -62,6 +68,7 @@ cfg.model_path = os.path.join(cfg.cur_dir, 'model.pt')                          
 cfg.model_best_path = os.path.join(cfg.cur_dir, 'model_best.pt')                    # 模型参数路径(保存模型参数,val集最佳)
 cfg.model_all_path = os.path.join(cfg.cur_dir, 'model.pth')                         # 模型路径(保存完整模型)
 cfg.log_path = os.path.join(cfg.cur_dir, 'exp.log')                                 # log文件路径
+cfg.result_dir = os.path.join(cfg.cur_dir, 'result')
 
 ###########################
 

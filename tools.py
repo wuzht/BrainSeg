@@ -99,7 +99,7 @@ def load_model(model, path, device):
     Return:
         the loaded model
     """
-    saved_params = torch.load(path)
+    saved_params = torch.load(path, map_location=device)
     model.load_state_dict(saved_params)
     model = model.to(device)
     return model
