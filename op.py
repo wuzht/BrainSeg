@@ -452,11 +452,11 @@ class Operation:
         # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
 
         ax00 = axs[0].imshow( image[0], aspect="auto", cmap='gray')
-        ax10 = axs[1].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9)
-        ax01 = axs[3].imshow( entropy,  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=2.0)
-        ax11 = axs[2].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9)
-        ax02 = axs[4].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.33)
-        
+        ax10 = axs[1].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9, interpolation='none')
+        ax01 = axs[3].imshow( entropy,  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=2.0, interpolation='none')
+        ax11 = axs[2].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9, interpolation='none')
+        # ax02 = axs[4].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.33, interpolation='none')
+        ax02 = axs[4].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.15, interpolation='none')
         fig.colorbar(ax00, ax=axs[0])
         fig.colorbar(ax10, ax=axs[1])
         fig.colorbar(ax01, ax=axs[3])
