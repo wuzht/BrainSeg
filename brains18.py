@@ -47,7 +47,8 @@ def prepare_data(root_dir="./datasets/BrainS18/BrainS18", dst_dir='./datasets/Br
                 slice = volume[:,:,i]
                 slice = exposure.equalize_adapthist(slice.astype(np.int))
                 print(np.max(slice), np.min(slice))
-                io.imsave(os.path.join(new_folder, new_filename), np.rot90(slice))        
+                # io.imsave(os.path.join(new_folder, new_filename), np.rot90(slice))  
+                io.imsave(os.path.join(new_folder, new_filename), np.rot90(slice, k=-1)) # rorate 90 clockwise      
             print(full_src_path)
 
     # 标签图像
@@ -63,13 +64,14 @@ def prepare_data(root_dir="./datasets/BrainS18/BrainS18", dst_dir='./datasets/Br
                 os.mkdir(new_folder)
             for i in range(num_of_image):
                 new_filename = '{}_{}.png'.format(str(i), filename[:-7])
-                io.imsave(os.path.join(new_folder, new_filename), np.rot90(volume[:,:,i]) )
+                # io.imsave(os.path.join(new_folder, new_filename), np.rot90(volume[:,:,i]) )
+                io.imsave(os.path.join(new_folder, new_filename), np.rot90(volume[:,:,i], k=-1) ) # rorate 90 clockwise
             print(full_src_path)
 
 
 class BrainS18Dataset(Dataset):
     def __init__(self, 
-    root_dir='./datasets/BrainS18/normal', 
+    root_dir='./datasets/BrainS18', 
     folders=['1', '5', '7', '4', '148', '070', '14'],
     file_names=['_FLAIR.png', '_reg_IR.png', '_reg_T1.png', '_segm.png'],
     is_tumor=False):

@@ -1,5 +1,14 @@
-/datasets/
+# ignore files
+datasets.zip
+
+# ignore folders
 /exp/
+
+# ignore all files in datasets/
+datasets/*
+# except for .gitkeep
+# !.gitkeep
+!datasets/prepare_dataset.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
