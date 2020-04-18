@@ -7,8 +7,7 @@ datasets.zip
 # ignore all files in datasets/
 datasets/*
 # except for .gitkeep
-# !.gitkeep
-!datasets/prepare_dataset.ipynb
+!.gitkeep
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

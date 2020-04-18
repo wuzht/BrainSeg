@@ -13,19 +13,15 @@ import torch.nn.functional as F
 from unet import DropoutUNet
 from dice_loss import dice_coeff
 from brains18 import BrainS18Dataset
-from tools import ImProgressBar, save_model, load_model, save_model_all, load_model_all, Logger
-
-def arr2str(arr):
-    s = '['
-    for x in arr:
-        s += '{:.3f}, '.format(x)
-    return s[:-2] + ']'
+from tools import ImProgressBar, save_model, load_model, Logger
+from viewer import Viewer, arr2str
 
 
 class Operation:
     def __init__(self, cfg):
         self.cfg = cfg
         self.device = cfg.device
+        torch.cuda.set_device(self.device)
         self.init_environment()
 
         # Data
@@ -79,39 +75,23 @@ class Operation:
         self.cfg.log = Logger(self.cfg.log_path, level='debug').logger
         self.cfg.log.info('config:\n{}'.format(self.cfg.cfg2str(self.cfg)))
 
+    def rm_dir(self):
+        os.system('rm -rf {}'.format(self.cfg.cur_dir))
 
     def load_val_data(self, is_tumor=True):
         self.val_data = BrainS18Dataset(folders=self.cfg.val_folds, is_tumor=is_tumor)
 
-    def load(self, path, mode=True):
-        """
-        mode: 加载模型方式
-            True: 加载模型参数
-            False: 加载完整模型
-        """
-        self.model = DropoutUNet(n_channels=1, n_classes=self.cfg.n_classes, model_type=self.cfg.model_type, drop_rate=self.cfg.drop_rate)
-        if mode:
-            self.model = load_model(self.model, path, self.device)
-            self.cfg.log.info("Model param loaded from {}".format(path))
-        else:
-            self.model = load_model_all(path, self.device)
-            self.cfg.log.info("Model loaded from {}".format(path))
+    def load(self, path, model_type):
+        self.model = DropoutUNet(n_channels=1, n_classes=self.cfg.n_classes, model_type=model_type, drop_rate=self.cfg.drop_rate)
+        self.model = load_model(self.model, path, self.device)
+        self.cfg.log.info("Model param loaded from {}".format(path))
+
+    def save(self, path):
+        save_model(self.model, path)
+        self.cfg.log.info("Model param saved at {}".format(path))
 
 
-    def save(self, path, mode=True):
-        """
-        mode: 加载模型方式
-            True: 加载模型参数
-            False: 加载完整模型
-        """
-        if mode:
-            save_model(self.model, path)
-            self.cfg.log.info("Model param saved at {}".format(path))
-        else:
-            save_model_all(self.model, path)
-            self.cfg.log.info("Model saved at {}".format(path))
-
-
+############################################################################################################################
     def train(self, data_loader, is_dropout=True):
         total_loss = 0
         self.model.train()
@@ -138,7 +118,7 @@ class Operation:
         return total_loss / num
 
     def eval_model(self, data_loader, is_dropout=False):
-        # 评价单个模型
+        """评价单个模型,训练时使用"""
         with torch.no_grad():
             pbar = ImProgressBar(len(data_loader))
             self.model.eval()
@@ -147,7 +127,7 @@ class Operation:
             # dices for each class
             total_dices = np.zeros(self.cfg.n_classes)
             num = 0
-            for i, (imgs, _, slice_id) in enumerate(data_loader):
+            for i, (imgs, _, _) in enumerate(data_loader):
                 num += imgs[2].shape[0]
                 batch_x = imgs[2].to(self.device)
                 batch_y = imgs[3].to(self.device)
@@ -165,9 +145,56 @@ class Operation:
             pbar.finish()
             return total_dices / num, total_loss / num
 
+    def fit(self):
+        self.model.to(self.device)
+        self.criterion.to(self.device)
+
+        self.cfg.log.critical('Start training')
+
+        best_epoch = 0
+        best_val_dice = 0
+
+        for epoch in range(self.cfg.epochs):
+            self.cfg.log.info('[Epoch {}/{}]'.format(epoch + 1, self.cfg.epochs))
+
+            loss = self.train(self.train_loader, is_dropout=True)
+            
+            train_dices, train_loss = self.eval_model(self.train_loader, is_dropout=False)
+            val_dices, val_loss = self.eval_model(self.val_loader, is_dropout=False)
+
+            self.cfg.log.info("Train Loss: {:.6f} (from train)".format(loss))
+            self.cfg.log.info("Train Loss: {:.6f} (from eval )".format(train_loss))
+            self.cfg.log.info("Val   Loss: {:.6f} (from eval )".format(val_loss))
+            
+            self.cfg.log.info("Class     : {} [mDice c1-8]".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
+            self.cfg.log.info("Train dice: {} [{:.3f}]".format(arr2str(train_dices), train_dices[1:].mean()))
+            self.cfg.log.info("Val   dice: {} [{:.3f}]".format(arr2str(val_dices), val_dices[1:].mean()))
+
+            self.save(self.cfg.model_path)
+            if val_dices[1:].mean() > best_val_dice:
+                best_epoch = epoch + 1
+                best_val_dice = val_dices[1:].mean()
+                self.save(self.cfg.model_best_path)
+
+            self.cfg.log.info("best val dice: [{:.3f}] (best epoch: {})".format(best_val_dice, best_epoch))
+        self.cfg.log.critical('Train finished')
+
+    def get_dices(self, y_pred, y_gt):
+        """
+        y_pred: 预测得到的mask
+        y_gt: Ground Truth
+        """
+        dices = np.zeros(self.cfg.n_classes)
+        for c in range(self.cfg.n_classes):
+            _x = (y_pred == c).float()
+            _y = (y_gt == c).float()
+            dices[c] += dice_coeff(_x, _y, self.device).item()
+        return dices
+
+############################################################################################################################
 
     def eval_model_dices(self, data, is_dropout=False):
-        # 单个模型的dices
+        """单个模型的dices，分层，测试时使用"""
         N, B = self.cfg.n_classes, 1
         C, H, W = data[0][0][2].shape
 
@@ -197,9 +224,9 @@ class Operation:
             self.print_dices(total_dices, partitioned_dices)
             return total_dices, partitioned_dices
 
-    
+
     def eval_sample_model_dices(self, data, sample, is_dropout=True):
-        # 采样模型或集成模型的dices
+        """采样模型或集成模型的dices，分层，测试时使用"""
         N, B = self.cfg.n_classes, 1
         C, H, W = data[0][0][2].shape
         T = self.cfg.sample_T if sample else len(self.models)
@@ -243,60 +270,11 @@ class Operation:
 
     def print_dices(self, total_dices, partitioned_dices):
         self.cfg.log.info("")
-        self.cfg.log.info("Class     : {} [c1-c8 mean]".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
+        self.cfg.log.info("Class     : {} [c1-c8 mean]".format(['{:3d}'.format(x) for x in range(0, len(total_dices))]))
         self.cfg.log.info("Total dice: {} [{:.3f}]".format(arr2str(total_dices), total_dices[1:].mean()))
         self.cfg.log.info("Bottomdice: {} [{:.3f}]".format(arr2str(partitioned_dices[0]), partitioned_dices[0][1:].mean()))
         self.cfg.log.info("Mid   dice: {} [{:.3f}]".format(arr2str(partitioned_dices[1]), partitioned_dices[1][1:].mean()))
         self.cfg.log.info("Up    dice: {} [{:.3f}]".format(arr2str(partitioned_dices[2]), partitioned_dices[2][1:].mean()))
-
-
-    def get_dices(self, y_pred, y_gt):
-        """
-        y_pred: 预测得到的mask
-        y_gt: Ground Truth
-        """
-        dices = np.zeros(self.cfg.n_classes)
-        for c in range(self.cfg.n_classes):
-            _x = (y_pred == c).float()
-            _y = (y_gt == c).float()
-            dices[c] += dice_coeff(_x, _y, self.device).item()
-        return dices
-
-
-    def fit(self):
-        self.model.to(self.device)
-        self.criterion.to(self.device)
-
-        self.cfg.log.critical('Start training')
-
-        best_epoch = 0
-        best_val_dice = 0
-
-        for epoch in range(self.cfg.epochs):
-            self.cfg.log.info('[Epoch {}/{}]'.format(epoch + 1, self.cfg.epochs))
-
-            loss = self.train(self.train_loader, is_dropout=True)
-            
-            train_dices, train_loss = self.eval_model(self.train_loader, is_dropout=False)
-            val_dices, val_loss = self.eval_model(self.val_loader, is_dropout=False)
-
-            self.cfg.log.info("Train Loss: {:.6f} (from train)".format(loss))
-            self.cfg.log.info("Train Loss: {:.6f} (from eval )".format(train_loss))
-            self.cfg.log.info("Val   Loss: {:.6f} (from eval )".format(val_loss))
-            
-            self.cfg.log.info("Class     : {} [mDice c1-8]".format(['{:3d}'.format(x) for x in range(0, self.cfg.n_classes)]))
-            self.cfg.log.info("Train dice: {} [{:.3f}]".format(arr2str(train_dices), train_dices[1:].mean()))
-            self.cfg.log.info("Val   dice: {} [{:.3f}]".format(arr2str(val_dices), val_dices[1:].mean()))
-
-            self.save(self.cfg.model_path, mode=True)
-            # self.save(self.cfg.model_all_path, mode=False)
-            if val_dices[1:].mean() > best_val_dice:
-                best_epoch = epoch + 1
-                best_val_dice = val_dices[1:].mean()
-                self.save(self.cfg.model_best_path, mode=True)
-
-            self.cfg.log.info("best val dice: [{:.3f}] (best epoch: {})".format(best_val_dice, best_epoch))
-        self.cfg.log.critical('Train finished')
 
 
     def predict(self, image, y_gt, title="", is_dropout=False):
@@ -327,27 +305,7 @@ class Operation:
             y_pred = y_pred.cpu().data.numpy()[0]
             y_gt = y_gt.cpu().data.numpy()[0]
 
-            # show me the result
-            fig, axs = plt.subplots(2,2, sharey=True, figsize=(10,8))
-            axs[0][0].set_title("Original data")
-            axs[0][1].set_title("Ground Truth")
-            axs[1][0].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
-            axs[1][1].set_title("Prediction")
-            plt.suptitle("({}) dice : {} [c1-c8 mean: {:.3f}]".format(title, arr2str(dices), dices[1:].mean()))
-            
-            # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
-            cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
-            # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
-
-            ax00 = axs[0][0].imshow( image[0,...], aspect="auto")
-            ax01 = axs[0][1].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9)
-            ax10 = axs[1][0].imshow( entropy[0,...],  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0, vmax=2)
-            ax11 = axs[1][1].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9)
-            
-            fig.colorbar(ax00, ax=axs[0][0])
-            fig.colorbar(ax01, ax=axs[0][1])
-            fig.colorbar(ax10, ax=axs[1][0])
-            fig.colorbar(ax11, ax=axs[1][1])
+            Viewer.show_fig_4(image, y_gt, entropy, y_pred, title, dices)
 
 
     def predict_sample(self, image, y_gt, title="", sample=True, is_dropout=True):
@@ -397,76 +355,11 @@ class Operation:
             # 转numpy
             y_pred = y_pred.cpu().data.numpy()[0]
             y_gt = y_gt.cpu().data.numpy()[0]
-
-            self.save_figs(image, y_gt, entropy, y_pred, variance, title, dices)
-            # self.show_fig(image, y_gt, entropy, y_pred, variance, title, dices)
             
-
-    def show_fig(self, image, y_gt, entropy, y_pred, variance, title, dices):
-        # show me the result
-        fig, axs = plt.subplots(2,3, sharey=True, figsize=(16,8.5))
-        axs[0][0].set_title("Original data")
-        axs[1][0].set_title("Ground Truth")
-        axs[0][1].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
-        axs[1][1].set_title("Prediction")
-        axs[0][2].set_title("Variance [{:.3f}, {:.3f}]".format(variance.min(), variance.max()))
-        plt.suptitle("({}) dice : {} [c1-c8 mean: {:.3f}]".format(title, arr2str(dices), dices[1:].mean()))
-        
-        # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
-        cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
-        # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
-
-        ax00 = axs[0][0].imshow( image[0], aspect="auto", cmap='gray')
-        ax10 = axs[1][0].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9)
-        ax01 = axs[0][1].imshow( entropy,  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=2.0)
-        ax11 = axs[1][1].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9)
-        ax02 = axs[0][2].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.35)
-        
-        fig.colorbar(ax00, ax=axs[0][0])
-        fig.colorbar(ax10, ax=axs[1][0])
-        fig.colorbar(ax01, ax=axs[0][1])
-        fig.colorbar(ax11, ax=axs[1][1])
-        fig.colorbar(ax02, ax=axs[0][2])
+            # Viewer.show_fig(image, y_gt, entropy, y_pred, variance, title, dices)
+            Viewer.save_figs(self.cfg.result_dir, image, y_gt, entropy, y_pred, variance, title, dices)
 
 
-    def save_figs(self, image, y_gt, entropy, y_pred, variance, title, dices):
-        # 创建文件夹
-        if not os.path.exists(self.cfg.result_dir):
-            os.makedirs(self.cfg.result_dir)
-
-        # show me the result
-        fig, axs = plt.subplots(nrows=1,ncols=5, sharey=True, figsize=(21,4))
-        fig.tight_layout() # 调整整体空白
-        plt.subplots_adjust(wspace=0, hspace=0) # 调整子图间距
-        axs[0].set_title("Original data")
-        axs[1].set_title("Ground Truth")
-        axs[3].set_title("Entropy [{:.3f}, {:.3f}]".format(entropy.min(), entropy.max()))
-        axs[2].set_title("Prediction")
-        axs[4].set_title("Variance [{:.3f}, {:.3f}]".format(variance.min(), variance.max()))
-        # plt.suptitle("({}) dice : {} [c1-c8 mean: {:.3f}]".format(title, arr2str(dices), dices[1:].mean()))
-        for i in range(5):
-            axs[i].axis('off') 
-
-        # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
-        cmap = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
-        # cmap = plt.cm.get_cmap('Set3', 10)    # 10 discrete colors
-
-        ax00 = axs[0].imshow( image[0], aspect="auto", cmap='gray')
-        ax10 = axs[1].imshow( y_gt, cmap=cmap, aspect="auto", vmin=0, vmax=9, interpolation='none')
-        ax01 = axs[3].imshow( entropy,  aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=2.0, interpolation='none')
-        ax11 = axs[2].imshow( y_pred, cmap=cmap, aspect="auto", vmin=0, vmax=9, interpolation='none')
-        # ax02 = axs[4].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.33, interpolation='none')
-        ax02 = axs[4].imshow( variance, aspect="auto", cmap=plt.cm.get_cmap('jet'), vmin=0.0, vmax=0.15, interpolation='none')
-        fig.colorbar(ax00, ax=axs[0])
-        fig.colorbar(ax10, ax=axs[1])
-        fig.colorbar(ax01, ax=axs[3])
-        fig.colorbar(ax11, ax=axs[2])
-        fig.colorbar(ax02, ax=axs[4])
-
-        name = title
-        plt.savefig(os.path.join(self.cfg.result_dir, name))
-
-    
     def ensemble_load_models(self):
         model_paths = [
             'D-No-brains18=0409-160305',
@@ -510,7 +403,3 @@ class Operation:
             self.models.append(model)
             self.cfg.log.info("Model loaded from {}".format(path)) 
         self.cfg.log.info("T (number of models): {}".format(len(self.models)))
-
-
-    def rm_dir(self):
-        os.system('rm -rf {}'.format(self.cfg.cur_dir))
