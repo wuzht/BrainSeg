@@ -191,27 +191,42 @@ class Operation:
             dices[c] += dice_coeff(_x, _y, self.device).item()
         return dices
 
-############################################################################################################################
 
-    def eval_model_dices(self, data, is_dropout=False):
-        """单个模型的dices，分层，测试时使用"""
+############################################################################################################################
+    def eval_dices(self, data, mode):
+        assert(mode == 'Dropout' or mode == 'Ensemble' or mode == 'Simple')
         N, B = self.cfg.n_classes, 1
         C, H, W = data[0][0][2].shape
-
-        pbar = ImProgressBar(len(data))
+        is_dropout = (mode != 'Simple')
         self.model.eval()
+        pbar = ImProgressBar(len(data))
 
         # dices for each class
         total_dices = np.zeros(self.cfg.n_classes)
         partitioned_dices = np.zeros(shape=(3, self.cfg.n_classes))     # 分块dices, 分下中上层，0-15下，16-31中，32-47上
-
+        
         with torch.no_grad():
             for i in range(len(data)):
                 imgs, _, slice_id = data[i]
                 x = torch.from_numpy(imgs[2]).to(self.device).reshape(B, C, H, W) # B,C,H,W
                 y_gt = imgs[3].to(self.device).reshape(B, H, W)
 
-                output = self.model(x, is_dropout=is_dropout)
+                if mode == 'Simple':
+                    output = self.model(x, is_dropout=is_dropout)
+                else:
+                    T = self.cfg.sample_T if mode == 'Dropout' else len(self.models)
+                    results = torch.zeros(T, N, H, W).to(self.device)               # (18, 9, 240, 240) 18 是模型数
+                    # 预测T次
+                    if mode == 'Dropout':
+                        for j in range(T):
+                            output = self.model(x, is_dropout=is_dropout)
+                            results[j] = F.softmax(output, dim=1)
+                    else:   # mode == 'Ensemble'
+                        for j, model in enumerate(self.models):
+                            output = model(x)           # B,N,H,W           
+                            results[j] = F.softmax(output, dim=1)
+                    output = torch.mean(results, dim=0, keepdim=True)            # B,N,H,W
+
                 _, y_pred = torch.max(output, dim=1)
                 dices = self.get_dices(y_pred, y_gt)
                 total_dices += dices
@@ -221,143 +236,93 @@ class Operation:
 
             total_dices /= (i+1)
             partitioned_dices *= 3 / (i+1)
-            self.print_dices(total_dices, partitioned_dices)
+            Viewer.print_dices(self.cfg.log.info, total_dices, partitioned_dices)
             return total_dices, partitioned_dices
 
 
-    def eval_sample_model_dices(self, data, sample, is_dropout=True):
-        """采样模型或集成模型的dices，分层，测试时使用"""
+    def inference(self, image, y_gt, mode):
+        """
+        N: n_classes        (e.g. 9)
+        B: batch_size       (e.g. 10)
+        C: image channels   (e.g. 1)
+        H: image height     (e.g. 240)
+        W: image width      (e.g. 240)
+        T: number of ensemble models or number of samples   (e.g. 30)
+        """
+        assert(mode == 'Dropout' or mode == 'Ensemble' or mode == 'Simple')
         N, B = self.cfg.n_classes, 1
-        C, H, W = data[0][0][2].shape
-        T = self.cfg.sample_T if sample else len(self.models)
-        pbar = ImProgressBar(len(data))
+        C, H, W = image.shape
+        is_dropout = (mode != 'Simple')
         self.model.eval()
 
-        # dices for each class
-        total_dices = np.zeros(self.cfg.n_classes)
-        partitioned_dices = np.zeros(shape=(3, self.cfg.n_classes))     # 分块dices, 分下中上层，0-15下，16-31中，32-47上
+        x = torch.from_numpy(image).to(self.device).reshape(B, C, H, W) # B,C,H,W
+        y_gt = y_gt.to(self.device).reshape(B, H, W)                    # B,H,W
 
-        with torch.no_grad():
-            for i in range(len(data)):
-                imgs, _, slice_id = data[i]
-                x = torch.from_numpy(imgs[2]).to(self.device).reshape(B, C, H, W) # B,C,H,W
-                y_gt = imgs[3].to(self.device).reshape(B, H, W)
-                results = torch.zeros(T, N, H, W).to(self.device)               # (18, 9, 240, 240) 18 是模型数
+        if mode == 'Simple':
+            with torch.no_grad():
+                output = self.model(x, is_dropout=is_dropout)
+                p_numpy = F.softmax(output, dim=1).cpu().data.numpy()
+                entropy = -np.sum(p_numpy * np.log(p_numpy), axis=1) # B,H,W
+                _, y_pred = torch.max(output, dim=1)
+                dices = self.get_dices(y_pred, y_gt)
 
-                # # 预测T次
-                if sample:
-                    for j in range(T):
+                # 转numpy
+                y_pred = y_pred.cpu().data.numpy()[0]
+                # y_gt = y_gt.cpu().data.numpy()[0]
+
+                return y_pred, entropy, dices
+        else:
+            T = self.cfg.sample_T if mode == 'Dropout' else len(self.models)
+            with torch.no_grad():
+                results = torch.zeros(T, N, H, W).to(self.device)               # (T, 9, 240, 240)
+
+                # 预测T次
+                if mode == 'Dropout':
+                    for i in range(T):
                         output = self.model(x, is_dropout=is_dropout)
-                        results[j] = F.softmax(output, dim=1)
-                else:
-                    for j, model in enumerate(self.models):
+                        results[i] = F.softmax(output, dim=1)
+                else:   # mode == 'Ensemble'
+                    for i, model in enumerate(self.models):
                         output = model(x)           # B,N,H,W           
-                        results[j] = F.softmax(output, dim=1)
-
+                        results[i] = F.softmax(output, dim=1)
+                    
+                # 得到预测结果和dice
                 p = torch.mean(results, dim=0, keepdim=True)            # B,N,H,W
                 _, y_pred = torch.max(p, dim=1)
                 dices = self.get_dices(y_pred, y_gt)
-                total_dices += dices
-                partitioned_dices[int(slice_id/16)] += dices
-                pbar.update(i)
-            pbar.finish()
 
-            total_dices /= (i+1)
-            partitioned_dices *= 3 / (i+1)
-            self.print_dices(total_dices, partitioned_dices)
-            return total_dices, partitioned_dices
+                # 计算variance
+                variance = np.var(results.cpu().data.numpy(), axis=0)   # N,H,W
+                variance = np.sum(variance, axis=0)                     # H,W
 
+                # 计算entropy
+                p_numpy = p.cpu().data.numpy()[0]                       # N,H,W
+                entropy = -np.sum(p_numpy * np.log(p_numpy), axis=0)    # H,W  这里的乘法 * 是对应位置逐点相乘
 
-    def print_dices(self, total_dices, partitioned_dices):
-        self.cfg.log.info("")
-        self.cfg.log.info("Class     : {} [c1-c8 mean]".format(['{:3d}'.format(x) for x in range(0, len(total_dices))]))
-        self.cfg.log.info("Total dice: {} [{:.3f}]".format(arr2str(total_dices), total_dices[1:].mean()))
-        self.cfg.log.info("Bottomdice: {} [{:.3f}]".format(arr2str(partitioned_dices[0]), partitioned_dices[0][1:].mean()))
-        self.cfg.log.info("Mid   dice: {} [{:.3f}]".format(arr2str(partitioned_dices[1]), partitioned_dices[1][1:].mean()))
-        self.cfg.log.info("Up    dice: {} [{:.3f}]".format(arr2str(partitioned_dices[2]), partitioned_dices[2][1:].mean()))
-
-
-    def predict(self, image, y_gt, title="", is_dropout=False):
-        """
-        N: n_classes        (e.g. 9)
-        B: batch_size       (e.g. 10)
-        C: image channels   (e.g. 1)
-        H: image height     (e.g. 240)
-        W: image width      (e.g. 240)
-        """
-        N, B = self.cfg.n_classes, 1
-        C, H, W = image.shape
-        self.model.eval()
-
-        with torch.no_grad():
-            x = torch.from_numpy(image).to(self.device).reshape(B, C, H, W) # B,C,H,W
-            y_gt = y_gt.to(self.device).reshape(B, H, W)
-
-            output = self.model(x, is_dropout=is_dropout)
-            p = F.softmax(output, dim=1).cpu().data.numpy()
-            entropy = -np.sum(p * np.log(p), axis=1) # B,H,W
-
-            _, y_pred = torch.max(output, dim=1)
-
-            dices = self.get_dices(y_pred, y_gt)
-
-            # 转numpy
-            y_pred = y_pred.cpu().data.numpy()[0]
-            y_gt = y_gt.cpu().data.numpy()[0]
-
-            Viewer.show_fig_4(image, y_gt, entropy, y_pred, title, dices)
-
-
-    def predict_sample(self, image, y_gt, title="", sample=True, is_dropout=True):
-        """
-        N: n_classes        (e.g. 9)
-        B: batch_size       (e.g. 10)
-        C: image channels   (e.g. 1)
-        H: image height     (e.g. 240)
-        W: image width      (e.g. 240)
-        T: number of ensemble models or number of samples   (e.g. 18)
-        """
-        N = self.cfg.n_classes
-        B = 1
-        C, H, W = image.shape
-        T = self.cfg.sample_T if sample else len(self.models)
-        self.model.eval()
-
-        with torch.no_grad():
-            x = torch.from_numpy(image).to(self.device).reshape(B, C, H, W) # B,C,H,W
-            y_gt = y_gt.to(self.device).reshape(B, H, W)                    # B,H,W
-            results = torch.zeros(T, N, H, W).to(self.device)               # (18, 9, 240, 240) 18 是模型数
-
-            # 预测T次
-            if sample:
-                for i in range(T):
-                    output = self.model(x, is_dropout=is_dropout)
-                    results[i] = F.softmax(output, dim=1)
-            else:
-                for i, model in enumerate(self.models):
-                    output = model(x)           # B,N,H,W           
-                    results[i] = F.softmax(output, dim=1)
+                # 转numpy
+                y_pred = y_pred.cpu().data.numpy()[0]
+                # y_gt = y_gt.cpu().data.numpy()[0]
                 
+                return y_pred, entropy, variance, dices
 
-            # 得到预测结果和dice
-            p = torch.mean(results, dim=0, keepdim=True)            # B,N,H,W
-            _, y_pred = torch.max(p, dim=1)
-            dices = self.get_dices(y_pred, y_gt)
 
-            # 计算variance
-            variance = np.var(results.cpu().data.numpy(), axis=0)   # N,H,W
-            variance = np.sum(variance, axis=0)                     # H,W
+    def predict(self, image, y_gt, title=""):
+        """
+        N: n_classes        (e.g. 9)
+        B: batch_size       (e.g. 10)
+        C: image channels   (e.g. 1)
+        H: image height     (e.g. 240)
+        W: image width      (e.g. 240)
+        """
+        y_pred, entropy, dices = self.inference(image, y_gt, mode='Simple')
+        Viewer.show_fig_4(image, y_gt, entropy, y_pred, title, dices)
 
-            # 计算entropy
-            p_numpy = p.cpu().data.numpy()[0]                       # N,H,W
-            entropy = -np.sum(p_numpy * np.log(p_numpy), axis=0)    # H,W  这里的乘法 * 是对应位置逐点相乘
-
-            # 转numpy
-            y_pred = y_pred.cpu().data.numpy()[0]
-            y_gt = y_gt.cpu().data.numpy()[0]
-            
-            # Viewer.show_fig(image, y_gt, entropy, y_pred, variance, title, dices)
-            Viewer.save_figs(self.cfg.result_dir, image, y_gt, entropy, y_pred, variance, title, dices)
+    def predict_sample(self, image, y_gt, mode, title=""):
+        
+        assert(mode == 'Dropout' or mode == 'Ensemble')
+        y_pred, entropy, variance, dices = self.inference(image, y_gt, mode=mode)
+        # Viewer.save_figs(self.cfg.result_dir, image, y_gt, entropy, y_pred, variance, title, dices)
+        Viewer.show_fig(image, y_gt, entropy, y_pred, variance, title, dices)
 
 
     def ensemble_load_models(self):
@@ -403,3 +368,19 @@ class Operation:
             self.models.append(model)
             self.cfg.log.info("Model loaded from {}".format(path)) 
         self.cfg.log.info("T (number of models): {}".format(len(self.models)))
+
+    
+    def do_sth(self, y_gt, entropy, variance):
+        label_count = np.zeros(self.cfg.n_classes)
+        entropy_sum = np.zeros(self.cfg.n_classes)
+        variance_sum = np.zeros(self.cfg.n_classes)
+
+        for c in range(self.cfg.n_classes):
+            label_count[c] += np.sum(y_gt == c)
+            entropy_sum[c] += np.sum(entropy[y_gt == c])
+            variance_sum[c] += np.sum(variance_sum[y_gt == c])
+        
+        return label_count, entropy_sum, variance_sum
+
+    # def do_more(self)
+

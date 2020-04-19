@@ -8,7 +8,6 @@ def arr2str(arr):
         s += '{:.3f}, '.format(x)
     return s[:-2] + ']'
 
-
 class Viewer(object):
     # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
     cmap_label = plt.cm.get_cmap('tab10', 10)    # 10 discrete colors
@@ -17,6 +16,16 @@ class Viewer(object):
 
     def __init__(self):
         super().__init__()
+
+    @staticmethod
+    def print_dices(printer, total_dices, partitioned_dices):
+        printer("")
+        printer("Class     : {} [c1-c8 mean]".format(['{:3d}'.format(x) for x in range(0, len(total_dices))]))
+        printer("Total dice: {} [{:.3f}]".format(arr2str(total_dices), total_dices[1:].mean()))
+        printer("Bottomdice: {} [{:.3f}]".format(arr2str(partitioned_dices[0]), partitioned_dices[0][1:].mean()))
+        printer("Mid   dice: {} [{:.3f}]".format(arr2str(partitioned_dices[1]), partitioned_dices[1][1:].mean()))
+        printer("Up    dice: {} [{:.3f}]".format(arr2str(partitioned_dices[2]), partitioned_dices[2][1:].mean()))
+
         
     @staticmethod
     def show_fig_4(image, y_gt, entropy, y_pred, title, dices):
