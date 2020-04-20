@@ -27,14 +27,10 @@ operation.fit()
 # print(dices[1:].mean())
 # dices, loss = operation.eval_model(operation.train_loader)
 # print(dices[1:].mean())
-
 # # 用data评价模型，不采样
-# dice1, dice2 = operation.eval_model_dices(operation.val_data)
-# dice1, dice2 = operation.eval_model_dices(operation.train_data)
-
+# dice1, dice2 = operation.eval_dices(operation.val_data, mode='Simple')
+# dice1, dice2 = operation.eval_dices(operation.train_data, mode='Simple')
 # # 评价val，采样
-# # operation.cfg.sample_T = 30
-# dice1, dice2 = operation.eval_sample_model_dices(operation.val_data, True)
-
+# dice1, dice2 = operation.eval_dices(operation.val_data, mode='Dropout')
 # # 评价train，采样
-# dice1, dice2 = operation.eval_sample_model_dices(operation.train_data, True)
+# dice1, dice2 = operation.eval_dices(operation.train_data, mode='Dropout')

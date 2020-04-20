@@ -24,6 +24,9 @@ class Operation:
         torch.cuda.set_device(self.device)
         self.init_environment()
 
+        self.ensemble_has_loaded = False    # 集成模型是否加载
+        self.is_val_tumor = False           # 当前验证集是否带病灶
+
         # Data
         self.train_data = BrainS18Dataset(folders=cfg.train_folds)
         self.val_data = BrainS18Dataset(folders=cfg.val_folds)
@@ -80,6 +83,7 @@ class Operation:
 
     def load_val_data(self, is_tumor=True):
         self.val_data = BrainS18Dataset(folders=self.cfg.val_folds, is_tumor=is_tumor)
+        self.is_val_tumor = is_tumor
 
     def load(self, path, model_type):
         self.model = DropoutUNet(n_channels=1, n_classes=self.cfg.n_classes, model_type=model_type, drop_rate=self.cfg.drop_rate)
@@ -250,6 +254,9 @@ class Operation:
         T: number of ensemble models or number of samples   (e.g. 30)
         """
         assert(mode == 'Dropout' or mode == 'Ensemble' or mode == 'Simple')
+        if mode == 'Ensemble' and (not self.ensemble_has_loaded):
+            self.ensemble_load_models()
+            self.ensemble_has_loaded = True
         N, B = self.cfg.n_classes, 1
         C, H, W = image.shape
         is_dropout = (mode != 'Simple')
@@ -262,7 +269,7 @@ class Operation:
             with torch.no_grad():
                 output = self.model(x, is_dropout=is_dropout)
                 p_numpy = F.softmax(output, dim=1).cpu().data.numpy()
-                entropy = -np.sum(p_numpy * np.log(p_numpy), axis=1) # B,H,W
+                entropy = -np.mean(p_numpy * np.log(p_numpy), axis=1) # B,H,W
                 _, y_pred = torch.max(output, dim=1)
                 dices = self.get_dices(y_pred, y_gt)
 
@@ -293,11 +300,11 @@ class Operation:
 
                 # 计算variance
                 variance = np.var(results.cpu().data.numpy(), axis=0)   # N,H,W
-                variance = np.sum(variance, axis=0)                     # H,W
+                variance = np.mean(variance, axis=0)                     # H,W
 
                 # 计算entropy
                 p_numpy = p.cpu().data.numpy()[0]                       # N,H,W
-                entropy = -np.sum(p_numpy * np.log(p_numpy), axis=0)    # H,W  这里的乘法 * 是对应位置逐点相乘
+                entropy = -np.mean(p_numpy * np.log(p_numpy), axis=0)    # H,W  这里的乘法 * 是对应位置逐点相乘
 
                 # 转numpy
                 y_pred = y_pred.cpu().data.numpy()[0]
@@ -306,24 +313,37 @@ class Operation:
                 return y_pred, entropy, variance, dices
 
 
-    def predict(self, image, y_gt, title=""):
-        """
-        N: n_classes        (e.g. 9)
-        B: batch_size       (e.g. 10)
-        C: image channels   (e.g. 1)
-        H: image height     (e.g. 240)
-        W: image width      (e.g. 240)
-        """
-        y_pred, entropy, dices = self.inference(image, y_gt, mode='Simple')
-        Viewer.show_fig_4(image, y_gt, entropy, y_pred, title, dices)
+    def predict(self, image, y_gt, mode, title=""):
+        assert(mode == 'Dropout' or mode == 'Ensemble' or mode == 'Simple')
+        if mode == 'Simple':
+            y_pred, entropy, dices = self.inference(image, y_gt, mode=mode)
+            Viewer.show_fig_4(image, y_gt, y_pred, entropy, title, dices)
+        else:
+            y_pred, entropy, variance, dices = self.inference(image, y_gt, mode=mode)
+            # Viewer.save_figs(self.cfg.result_dir, image, y_gt, y_pred, entropy, variance, title, dices)
+            # Viewer.show_fig(image, y_gt, y_pred, entropy, variance, title, dices)
+            Viewer.save_figs_foo(self.cfg.result_dir, image, y_gt, y_pred, entropy, variance, title, dices)
 
-    def predict_sample(self, image, y_gt, mode, title=""):
-        
+    def get_picture_many(self, mode):
         assert(mode == 'Dropout' or mode == 'Ensemble')
-        y_pred, entropy, variance, dices = self.inference(image, y_gt, mode=mode)
-        # Viewer.save_figs(self.cfg.result_dir, image, y_gt, entropy, y_pred, variance, title, dices)
-        Viewer.show_fig(image, y_gt, entropy, y_pred, variance, title, dices)
-
+        print(mode)
+        # image_file_name = '19-26{}'.format(mode)
+        image_file_name = mode
+        img_ids = (0,6,12,18,24,30,36,42)
+        # img_ids = (14,15,16,17,18,19,20,21)
+        # img_ids = (19,20,21,22,23,24,25,26)
+        images, y_gts, y_preds, entropys, variances = [],[],[],[],[]
+        for i in img_ids:
+            print(i)
+            imgs, _, _ = self.val_data[i]
+            image, y_gt = imgs[2], imgs[3]
+            y_pred, entropy, variance, _ = self.inference(image, y_gt, mode=mode)
+            images.append(image)
+            y_gts.append(y_gt)
+            y_preds.append(y_pred)
+            entropys.append(entropy)
+            variances.append(variance)
+        Viewer.save_figs_many(self.cfg.result_dir, images, y_gts, y_preds, entropys, variances, title=image_file_name)
 
     def ensemble_load_models(self):
         model_paths = [
@@ -369,18 +389,83 @@ class Operation:
             self.cfg.log.info("Model loaded from {}".format(path)) 
         self.cfg.log.info("T (number of models): {}".format(len(self.models)))
 
-    
-    def do_sth(self, y_gt, entropy, variance):
+    def analyse_ent_var_dice(self, data, mode):
+        assert(mode == 'Dropout' or mode == 'Ensemble')
         label_count = np.zeros(self.cfg.n_classes)
         entropy_sum = np.zeros(self.cfg.n_classes)
         variance_sum = np.zeros(self.cfg.n_classes)
+        dices_sum = np.zeros(self.cfg.n_classes)
+        pbar = ImProgressBar(len(data))
 
-        for c in range(self.cfg.n_classes):
-            label_count[c] += np.sum(y_gt == c)
-            entropy_sum[c] += np.sum(entropy[y_gt == c])
-            variance_sum[c] += np.sum(variance_sum[y_gt == c])
-        
-        return label_count, entropy_sum, variance_sum
+        for i in range(len(data)):
+            imgs, _, _ = data[i]
+            image, y_gt = imgs[2], imgs[3]
+            _, entropy, variance, dices = self.inference(image, y_gt, mode=mode)
+            y_gt = y_gt.numpy()
+            for c in range(self.cfg.n_classes):
+                label_count[c] += np.sum(y_gt == c)
+                entropy_sum[c] += np.sum(entropy[y_gt == c])
+                variance_sum[c] += np.sum(variance[y_gt == c])
+            dices_sum += dices
+            pbar.update(i)
+        pbar.finish()
 
-    # def do_more(self)
+        return entropy_sum / label_count, variance_sum / label_count, dices_sum / (i+1)
 
+    def analyse_ent_var_dice_and_draw_scatter(self, mode):
+        ents, vars, dices = self.analyse_ent_var_dice(self.val_data, mode)
+        print("dices: {} [{:.3f}]".format(arr2str(dices), dices[1:].mean()))
+        Viewer.draw_scatter(ents, dices, 'Mean Entropy', 'Mean Dice', vars, dices, 'Mean Variance', 'Mean Dice')
+
+    def analyse_ent_var_dice_and_draw_scatter_tumor(self, mode):
+        assert(mode == 'Dropout' or mode == 'Ensemble')
+        if not self.is_val_tumor:
+            self.load_val_data(is_tumor=True)
+        assert(self.is_val_tumor is True)
+
+        data = self.val_data
+        tumor_lable = 100   # 病灶的标签为100
+        N = self.cfg.n_classes
+        #####################################################
+        label_count = np.zeros(N + 1)
+        entropy_sum = np.zeros(N + 1)
+        variance_sum = np.zeros(N + 1)
+        dices_sum = np.zeros(N + 1)
+        pbar = ImProgressBar(len(data))
+
+        for i in range(len(data)):
+            imgs, _, _ = data[i]
+            image, y_gt = imgs[2], imgs[3]
+            _, entropy, variance, dices = self.inference(image, y_gt, mode=mode)
+            y_gt = y_gt.numpy()
+            for c in range(N):
+                label_count[c] += np.sum(y_gt == c)
+                entropy_sum[c] += np.sum(entropy[y_gt == c])
+                variance_sum[c] += np.sum(variance[y_gt == c])
+
+            # 病灶部分
+            label_count[c+1] += np.sum(y_gt == tumor_lable)
+            entropy_sum[c+1] += np.sum(entropy[y_gt == tumor_lable])
+            variance_sum[c+1] += np.sum(variance[y_gt == tumor_lable])
+            
+            dices_sum[:N] += dices
+            pbar.update(i)
+        pbar.finish()
+        #####################################################
+        ents, vars, dices = entropy_sum / label_count, variance_sum / label_count, dices_sum / (i+1)
+
+        # 非病灶区域和病灶区域的平均ent和var对比
+        non_tumor_ent_per_px = np.sum(entropy_sum[:N]) / np.sum(label_count[:N])
+        non_tumor_var_per_px = np.sum(variance_sum[:N]) / np.sum(label_count[:N])
+        tumor_ent_per_px = entropy_sum[N] / label_count[N]
+        tumor_var_per_px = variance_sum[N] / label_count[N]
+
+        print('non_tumor_ent_per_px:', non_tumor_ent_per_px)
+        print('non_tumor_var_per_px:', non_tumor_var_per_px)
+        print('tumor_ent_per_px:', tumor_ent_per_px)
+        print('tumor_var_per_px:', tumor_var_per_px)
+
+        print('ents: {}'.format(ents))
+        print('vars: {}'.format(vars))
+        print("dices: {} [{:.3f}]".format(arr2str(dices), dices[1:N].mean()))
+        Viewer.draw_scatter(ents, dices, 'Mean Entropy', 'Mean Dice', vars, dices, 'Mean Variance', 'Mean Dice')
