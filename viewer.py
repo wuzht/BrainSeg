@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import os
 import numpy as np
 
@@ -8,6 +9,15 @@ def arr2str(arr):
     for x in arr:
         s += '{:.3f}, '.format(x)
     return s[:-2] + ']'
+
+def inc_rate(begin, end):
+    return (end - begin) / begin * 100
+
+def show_result(data, ids, operation):
+    for i in ids:
+        imgs, folder, slice_id = data[i]
+        operation.predict(imgs[2], imgs[3], mode='Dropout', title='{} {}'.format(folder, slice_id))
+# show_result(operation.val_data, [26], operation)
 
 class Viewer(object):
     # cmap = plt.cm.get_cmap('Paired', 10)    # 10 discrete colors
@@ -177,8 +187,46 @@ class Viewer(object):
             axs[j].grid(True)
             axs[j].set_xlim([0, 1.1 * np.max(xs[j])])
             # axs[j].set_ylim(top=1.0)
-            axs[j].ticklabel_format(style='sci', axis='x', scilimits=(0, 0), useMathText=True)
+            axs[j].ticklabel_format(style='sci', axis='both', scilimits=(0, 0), useMathText=True)
         
+
+    @staticmethod
+    def draw_scatter2(xs1, ys1, xlabel1, ylabel1, xs2, ys2, xlabel2, ylabel2):
+        xs = np.stack(arrays=(xs1, xs2))
+        ys = np.stack(arrays=(ys1, ys2))
+        xlabel = [xlabel1, xlabel2]
+        ylabel = [ylabel1, ylabel2]
+        scale = 120
+
+        fig, axs = plt.subplots(nrows=1,ncols=2, sharey=False, figsize=(11,5))
+        # fig.tight_layout() # 调整整体空白
+
+        for j in range(2):
+            for i, (x, y) in enumerate(zip(xs[j], ys[j])):
+                color = np.array(Viewer.cmap_label(i+1))
+                color = color.reshape(1, len(color))
+                axs[j].scatter(x=x, y=y, c=color, s=scale, label=i+1, alpha=1)
+                axs[j].annotate(s='  {}'.format(i+1), xy=(x, y))
+            axs[j].set_xlabel(xlabel[j], size=12)
+            axs[j].set_ylabel(ylabel[j], size=12)
+            axs[j].grid(True)
+            axs[j].set_xlim([0, 1.1 * np.max(xs[j])])
+            # axs[j].set_ylim(top=1.0)
+            axs[j].ticklabel_format(style='sci', axis='both', scilimits=(0, 0), useMathText=True)
+
+    
+    @staticmethod
+    def draw_legend():
+        colors = [Viewer.cmap_label(c)[:3] for c in range(10)]
+        handles = [Rectangle(xy=(0,0),width=1,height=1, color=c) for c in colors]
+        labels = [c for c in range(10)]
+
+        plt.tight_layout() # 调整整体空白
+        plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0.01, wspace=0.01)
+        plt.figure(figsize = (15,0.5))
+        plt.legend(handles,labels,mode='expand',ncol=10,fontsize='xx-large')
+        plt.axis('off')
+        plt.show()
 
 
 

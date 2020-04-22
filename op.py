@@ -389,36 +389,53 @@ class Operation:
             self.cfg.log.info("Model loaded from {}".format(path)) 
         self.cfg.log.info("T (number of models): {}".format(len(self.models)))
 
-    def analyse_ent_var_dice(self, data, mode):
-        assert(mode == 'Dropout' or mode == 'Ensemble')
-        label_count = np.zeros(self.cfg.n_classes)
-        entropy_sum = np.zeros(self.cfg.n_classes)
-        variance_sum = np.zeros(self.cfg.n_classes)
-        dices_sum = np.zeros(self.cfg.n_classes)
-        pbar = ImProgressBar(len(data))
 
+    def analyse_ent_var_dice_and_draw_scatter(self, mode):
+        assert(mode == 'Dropout' or mode == 'Ensemble')
+        # 加载原始数据
+        if self.is_val_tumor:
+            self.load_val_data(is_tumor=False)
+        assert(self.is_val_tumor is False)
+
+        data = self.val_data
+        N = self.cfg.n_classes
+        #####################################################
+        label_count = np.zeros(N)
+        entropy_sum = np.zeros(N)
+        variance_sum = np.zeros(N)
+        dices_sum = np.zeros(N)
+
+        pbar = ImProgressBar(len(data))
         for i in range(len(data)):
             imgs, _, _ = data[i]
             image, y_gt = imgs[2], imgs[3]
             _, entropy, variance, dices = self.inference(image, y_gt, mode=mode)
             y_gt = y_gt.numpy()
-            for c in range(self.cfg.n_classes):
+            for c in range(N):
                 label_count[c] += np.sum(y_gt == c)
                 entropy_sum[c] += np.sum(entropy[y_gt == c])
                 variance_sum[c] += np.sum(variance[y_gt == c])
             dices_sum += dices
             pbar.update(i)
         pbar.finish()
+        #####################################################
+        ents, vars, dices = entropy_sum / label_count, variance_sum / label_count, dices_sum / (i+1)
 
-        return entropy_sum / label_count, variance_sum / label_count, dices_sum / (i+1)
+        # 非病灶区域(类别1-8）和病灶区域的平均ent和var对比
+        non_tumor_ent_per_px = np.sum(entropy_sum[1:N]) / np.sum(label_count[1:N])
+        non_tumor_var_per_px = np.sum(variance_sum[1:N]) / np.sum(label_count[1:N])
+        print('(c1-8)non_tumor_ent_per_px:', non_tumor_ent_per_px)
+        print('(c1-8)non_tumor_var_per_px:', non_tumor_var_per_px)
 
-    def analyse_ent_var_dice_and_draw_scatter(self, mode):
-        ents, vars, dices = self.analyse_ent_var_dice(self.val_data, mode)
         print("dices: {} [{:.3f}]".format(arr2str(dices), dices[1:].mean()))
         Viewer.draw_scatter(ents, dices, 'Mean Entropy', 'Mean Dice', vars, dices, 'Mean Variance', 'Mean Dice')
+        Viewer.draw_scatter2(ents[1:], label_count[1:], 'Mean Entropy', 'Frequeancy of Pixels per Class',
+                            vars[1:], label_count[1:], 'Mean Variance', 'Frequeancy of Pixels per Class')
+
 
     def analyse_ent_var_dice_and_draw_scatter_tumor(self, mode):
         assert(mode == 'Dropout' or mode == 'Ensemble')
+        # 加载带病灶的数据
         if not self.is_val_tumor:
             self.load_val_data(is_tumor=True)
         assert(self.is_val_tumor is True)
@@ -431,8 +448,8 @@ class Operation:
         entropy_sum = np.zeros(N + 1)
         variance_sum = np.zeros(N + 1)
         dices_sum = np.zeros(N + 1)
-        pbar = ImProgressBar(len(data))
 
+        pbar = ImProgressBar(len(data))
         for i in range(len(data)):
             imgs, _, _ = data[i]
             image, y_gt = imgs[2], imgs[3]
@@ -454,18 +471,25 @@ class Operation:
         #####################################################
         ents, vars, dices = entropy_sum / label_count, variance_sum / label_count, dices_sum / (i+1)
 
-        # 非病灶区域和病灶区域的平均ent和var对比
-        non_tumor_ent_per_px = np.sum(entropy_sum[:N]) / np.sum(label_count[:N])
-        non_tumor_var_per_px = np.sum(variance_sum[:N]) / np.sum(label_count[:N])
+        # 非病灶区域(类别1-8）和病灶区域的平均ent和var对比
+        non_tumor_ent_per_px = np.sum(entropy_sum[1:N]) / np.sum(label_count[1:N])
+        non_tumor_var_per_px = np.sum(variance_sum[1:N]) / np.sum(label_count[1:N])
         tumor_ent_per_px = entropy_sum[N] / label_count[N]
         tumor_var_per_px = variance_sum[N] / label_count[N]
+        # 类别1-9
+        all_tumor_ent_per_px = np.sum(entropy_sum[1:]) / np.sum(label_count[1:])
+        all_tumor_var_per_px = np.sum(variance_sum[1:]) / np.sum(label_count[1:])
 
-        print('non_tumor_ent_per_px:', non_tumor_ent_per_px)
-        print('non_tumor_var_per_px:', non_tumor_var_per_px)
-        print('tumor_ent_per_px:', tumor_ent_per_px)
-        print('tumor_var_per_px:', tumor_var_per_px)
+        print('(c1-8)non_tumor_ent_per_px:', non_tumor_ent_per_px)
+        print('(c1-8)non_tumor_var_per_px:', non_tumor_var_per_px)
+        print('(c1-8)tumor_ent_per_px:', tumor_ent_per_px)
+        print('(c  9)tumor_var_per_px:', tumor_var_per_px)
+        print('(c1-9)all_tumor_ent_per_px:', all_tumor_ent_per_px)
+        print('(c1-9)all_tumor_var_per_px:', all_tumor_var_per_px)
 
         print('ents: {}'.format(ents))
         print('vars: {}'.format(vars))
         print("dices: {} [{:.3f}]".format(arr2str(dices), dices[1:N].mean()))
         Viewer.draw_scatter(ents, dices, 'Mean Entropy', 'Mean Dice', vars, dices, 'Mean Variance', 'Mean Dice')
+        Viewer.draw_scatter2(ents[1:], label_count[1:], 'Mean Entropy', 'Frequeancy of Pixels per Class',
+                            vars[1:], label_count[1:], 'Mean Variance', 'Frequeancy of Pixels per Class')

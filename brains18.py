@@ -146,6 +146,7 @@ class BrainS18Dataset(Dataset):
         plt.show()
 
     def get_class_weight(self, n_classes=9):
+        # np.set_printoptions(suppress=True)
         class_num = np.zeros(n_classes)   # 统计每类的像素点个数
         img_num = self.__len__()
         for i in range(img_num):
@@ -156,7 +157,8 @@ class BrainS18Dataset(Dataset):
         class_weight = 1.0 / class_num
         sum_class_weight = np.sum(class_weight)
         class_weight = [x / sum_class_weight for x in class_weight]
-
+        # print(class_num)
+        # print(class_weight)
         return class_weight
 
     
