@@ -244,7 +244,7 @@ class Operation:
             return total_dices, partitioned_dices
 
 
-    def inference(self, image, y_gt, mode):
+    def inference(self, image, y_gt, mode, return_p=False):
         """
         N: n_classes        (e.g. 9)
         B: batch_size       (e.g. 10)
@@ -276,7 +276,8 @@ class Operation:
                 # 转numpy
                 y_pred = y_pred.cpu().data.numpy()[0]
                 # y_gt = y_gt.cpu().data.numpy()[0]
-
+                if return_p:
+                    return y_pred, entropy, dices, p_numpy
                 return y_pred, entropy, dices
         else:
             T = self.cfg.sample_T if mode == 'Dropout' else len(self.models)
@@ -309,7 +310,9 @@ class Operation:
                 # 转numpy
                 y_pred = y_pred.cpu().data.numpy()[0]
                 # y_gt = y_gt.cpu().data.numpy()[0]
-                
+
+                if return_p:
+                    return y_pred, entropy, dices, p_numpy
                 return y_pred, entropy, variance, dices
 
 
