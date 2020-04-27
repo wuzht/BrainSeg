@@ -49,6 +49,8 @@ class Operation:
         self.model = DropoutUNet(n_channels=1, n_classes=cfg.n_classes, model_type=cfg.model_type, drop_rate=cfg.drop_rate)
 
         # Criterion
+        # CrossEntropyLoss: This criterion combines nn.LogSoftmax() and nn.NLLLoss() in one single class.
+        # https://pytorch.org/docs/stable/nn.html?highlight=crossentropy#torch.nn.CrossEntropyLoss
         if cfg.is_class_weight:
             self.class_weight = self.train_data.get_class_weight()
             self.cfg.log.critical("class_weight: \n{}".format(self.class_weight))
